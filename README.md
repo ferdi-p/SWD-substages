@@ -64,12 +64,12 @@ The principal entry points are:
 ## Data source
 
 The tracked CSV files are direct transformations of the life-table and
-fertility data from:
+fertility data from Baser et al. If you use these data, please cite:
 
 > Baser, N., Rossini, L., Anfora, G., Temel, K. M., Gualano, S., Garone, E.,
 > and Santoro, F. (2025). Thermal Development, Mortality, and Fertility of an
 > Apulian Strain of *Drosophila suzukii* at Different Temperatures. *Insects*,
-> 16, 60. https://doi.org/10.3390/insects16010060
+> 16, 60. [https://doi.org/10.3390/insects16010060](https://doi.org/10.3390/insects16010060)
 
 The original workbooks and scripts are available from the
 [source-data repository](https://github.com/lucaros1190/DSuzukiiLifeTables).
@@ -78,6 +78,8 @@ run this analysis. See `data/processed/baser/README.md` for provenance details.
 
 ## Licensing
 
-The upstream data distribution includes the GPL-3.0 license reproduced at
-`data/processed/baser/UPSTREAM_LICENSE`. A separate license for the original
-code in this repository has not yet been selected.
+The original software in this repository is released under the
+[MIT License](LICENSE). The upstream data distribution includes the GPL-3.0
+license reproduced at `data/processed/baser/UPSTREAM_LICENSE`; attribution and
+provenance for the processed CSV files are documented above and in
+`data/processed/baser/README.md`.
