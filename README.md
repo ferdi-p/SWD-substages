@@ -1,5 +1,11 @@
 # How much stage structure is needed to model population dynamics?
 
+> **Archived repository.** This repository is no longer updated. Development
+> now takes place in the single canonical
+> [`r-R0-pop`](https://github.com/ferdi-p/r-R0-pop) repository, which remains
+> private during manuscript review and will be made public before publication.
+> A versioned analysis package will also be preserved in Zenodo.
+
 This repository contains the Python code and processed input data supporting
 the manuscript “How much stage structure is needed to model population
 dynamics? A case study of an invasive fruit fly.” The analysis uses
