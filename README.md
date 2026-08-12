@@ -1,8 +1,10 @@
-# Stage-chain population models for spotted wing drosophila
+# How much stage structure is needed to model population dynamics?
 
 This repository contains the Python code and processed input data supporting
-the analysis of how stage subdivision affects temperature-dependent population
-models for *Drosophila suzukii* (spotted wing drosophila).
+the manuscript “How much stage structure is needed to model population
+dynamics? A case study of an invasive fruit fly.” The analysis uses
+temperature-dependent life-history data for *Drosophila suzukii* (spotted wing
+drosophila).
 
 The repository compares three nested models:
 
@@ -22,19 +24,20 @@ is recorded in `requirements-lock.txt`.
 
 ```bash
 make setup
-make verify
+make verify-model
 ```
 
-`make verify` runs the tests, rebuilds the complete analysis, and checks that
-the expected datasets, numerical summaries, and figures were produced. A
-typical rebuild takes about one minute on a laptop.
+`make verify-model` runs the tests, rebuilds the complete model workflow, and
+checks that the expected datasets, numerical summaries, and figures were
+produced. A typical rebuild takes about one minute on a laptop.
 
 For subsequent runs:
 
 ```bash
-make analysis    # rebuild all analyses, tables, reports, and figures
-make test        # run the unit tests only
-make help        # list the supported entry points
+make model        # rebuild the model analyses, tables, reports, and figures
+make analysis     # model workflow plus raw-data summary plots
+make test         # run the unit tests only
+make help         # list the supported entry points
 ```
 
 The Makefile uses `.venv/bin/python` when that environment exists and sets

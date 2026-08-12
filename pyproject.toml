@@ -1,7 +1,7 @@
 [project]
 name = "swd-substages"
 version = "0.1.0"
-description = "Stage-chain population models for spotted wing drosophila."
+description = "Stage-chain population models for Drosophila suzukii."
 requires-python = ">=3.12"
 dependencies = [
     "matplotlib>=3.7",

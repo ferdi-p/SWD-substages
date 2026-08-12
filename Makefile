@@ -8,12 +8,14 @@ PROCESSED_DATA = \
 	data/processed/baser/adult_survival.csv \
 	data/processed/baser/fertility.csv
 
-.PHONY: all analysis setup preprocess processed direct comparison intervention \
-	appendix-figure data-plots test verify help
+.PHONY: all model analysis setup preprocess processed direct comparison \
+	intervention appendix-figure data-plots test verify-model verify help
 
-all: analysis
+all: model
 
-analysis: direct intervention appendix-figure data-plots
+model: direct intervention appendix-figure
+
+analysis: model data-plots
 
 setup:
 	python3 -m venv .venv
@@ -46,11 +48,16 @@ test:
 verify: test analysis
 	$(PYTHON) scripts/verify_outputs.py
 
+verify-model: test model
+	$(PYTHON) scripts/verify_outputs.py
+
 help:
 	@echo "make setup       Create the exact tested Python environment"
-	@echo "make analysis    Rebuild all analyses, tables, reports, and figures"
+	@echo "make model       Rebuild the model analyses, tables, reports, and figures"
+	@echo "make verify-model Test, rebuild, and verify the model workflow"
+	@echo "make analysis    Model workflow plus raw-data summary plots"
 	@echo "make test        Run the unit tests"
-	@echo "make verify      Run tests, rebuild the analysis, and verify outputs"
+	@echo "make verify      Verify the model workflow plus raw-data summary plots"
 	@echo "make preprocess  Recreate tracked CSVs from optional source workbooks"
 
 $(PROCESSED_DATA):
