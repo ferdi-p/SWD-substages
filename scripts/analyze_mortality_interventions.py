@@ -26,7 +26,7 @@ from r_r0_pop.paper_config import (
     manuscript_model_style,
     model_style,
 )
-from r_r0_pop.paths import FIGURE_DIR, OUTPUT_DIR, REPORT_DIR
+from r_r0_pop.paths import MANUSCRIPT_FIGURE_DIR, OUTPUT_DIR, REPORT_DIR
 from r_r0_pop.plotting import clean_axis, save_figure, temperature_palette
 from r_r0_pop.population_model import (
     LifeHistoryParameters,
@@ -59,6 +59,15 @@ def parse_args() -> argparse.Namespace:
         "--report",
         type=Path,
         default=REPORT_DIR / "mortality_interventions.md",
+    )
+    parser.add_argument(
+        "--publication-figure-dir",
+        type=Path,
+        default=MANUSCRIPT_FIGURE_DIR,
+        help=(
+            "Directory for publication-formatted figures. The model-only "
+            "workflow redirects this to outputs/."
+        ),
     )
     parser.add_argument(
         "--temperatures",
@@ -145,7 +154,9 @@ def main() -> None:
         models=models,
         output=manuscript_r_plot,
     )
-    manuscript_pdf = FIGURE_DIR / "mortality_intervention_r_20C.pdf"
+    manuscript_pdf = (
+        args.publication_figure_dir / "mortality_intervention_r_20C.pdf"
+    )
     plot_manuscript_mortality_intervention_r(
         juvenile,
         adult,

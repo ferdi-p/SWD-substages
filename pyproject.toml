@@ -1,7 +1,7 @@
 [project]
-name = "swd-substages"
+name = "r-r0-pop"
 version = "0.1.0"
-description = "Stage-chain population models for Drosophila suzukii."
+description = "Direct demographic calculations of r and R0 from population data."
 requires-python = ">=3.12"
 dependencies = [
     "matplotlib>=3.7",

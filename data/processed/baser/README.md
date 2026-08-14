@@ -10,12 +10,14 @@ workbooks published with:
 > 16, 60. https://doi.org/10.3390/insects16010060
 
 The article identifies the raw dataset and scripts as publicly available at
-https://github.com/lucaros1190/DSuzukiiLifeTables. The `UPSTREAM_LICENSE` file
-is the GPL-3.0 license distributed with that source repository.
+https://github.com/lucaros1190/DSuzukiiLifeTables. The upstream README and
+GPL-3.0 license are retained under
+`Baser et al 2025/DSuzukiiLifeTables-main/`.
 
-The original Excel workbooks are not duplicated here. They are unnecessary for
-a normal analysis run. To recreate the CSV files, place
-`LifeTablesDataset.xlsx` and `Fertility.xlsx` under `data/raw/baser/` and run:
+The original Excel workbooks are not redistributed here and are unnecessary
+for a normal analysis run. To recreate the CSV files, place
+`LifeTablesDataset.xlsx` and `Fertility.xlsx` under
+`Baser et al 2025/DSuzukiiLifeTables-main/` and run:
 
 ```bash
 make preprocess

@@ -61,7 +61,7 @@ from r_r0_pop.paper_config import (
     model_style,
 )
 from r_r0_pop.paths import (
-    FIGURE_DIR,
+    MANUSCRIPT_FIGURE_DIR,
     OUTPUT_DIR,
     PROCESSED_DATA_DIR,
     REPORT_DIR,
@@ -113,6 +113,24 @@ def parse_args() -> argparse.Namespace:
         "--report",
         type=Path,
         default=REPORT_DIR / "model_complexity.md",
+    )
+    parser.add_argument(
+        "--publication-figure-dir",
+        type=Path,
+        default=MANUSCRIPT_FIGURE_DIR,
+        help=(
+            "Directory for publication-formatted figures. The model-only "
+            "workflow redirects this to outputs/."
+        ),
+    )
+    parser.add_argument(
+        "--supplementary-figure-dir",
+        type=Path,
+        default=SUPPLEMENTARY_FIGURE_DIR,
+        help=(
+            "Directory for publication-formatted supplementary figures. "
+            "The model-only workflow redirects this to outputs/."
+        ),
     )
     parser.add_argument("--temperature-min", type=float, default=10.0)
     parser.add_argument("--temperature-max", type=float, default=32.0)
@@ -404,6 +422,8 @@ def main() -> None:
         durations=durations,
         plot_dir=args.plot_dir,
         main_models=main_models,
+        publication_figure_dir=args.publication_figure_dir,
+        supplementary_figure_dir=args.supplementary_figure_dir,
     )
     shared_figures["seasonal_simulation"] = args.plot_dir / "seasonal_simulation_composite.png"
     plot_seasonal_simulation_composite(
@@ -426,6 +446,8 @@ def main() -> None:
         curves=curves,
         direct_rates=direct_rates,
         main_models=main_models,
+        figure_dir=args.publication_figure_dir,
+        supplementary_figure_dir=args.supplementary_figure_dir,
     )
 
     write_report(
@@ -1398,13 +1420,15 @@ def write_shared_model_figures(
     durations: pd.DataFrame,
     plot_dir: Path,
     main_models: list[ModelSpec],
+    publication_figure_dir: Path = MANUSCRIPT_FIGURE_DIR,
+    supplementary_figure_dir: Path = SUPPLEMENTARY_FIGURE_DIR,
 ) -> dict[str, Path]:
     plot_dir.mkdir(parents=True, exist_ok=True)
-    supplementary_figure_dir = SUPPLEMENTARY_FIGURE_DIR
+    publication_figure_dir.mkdir(parents=True, exist_ok=True)
     supplementary_figure_dir.mkdir(parents=True, exist_ok=True)
     paths = {
         "stage_durations": plot_dir / "mean_stage_durations.png",
-        "manuscript_stage_durations": FIGURE_DIR
+        "manuscript_stage_durations": publication_figure_dir
         / "mean_stage_durations.pdf",
         "delay_distributions": plot_dir / "delay_distributions.png",
         "delay_distributions_flipped": plot_dir / "delay_distributions_flipped.png",
@@ -1416,7 +1440,7 @@ def write_shared_model_figures(
         "maturation_survival_flipped": plot_dir / "maturation_survival_flipped.png",
         "maturation_survival_main_stage_xrange": plot_dir
         / "maturation_survival_main_stage_xrange.png",
-        "manuscript_maturation_survival": FIGURE_DIR
+        "manuscript_maturation_survival": publication_figure_dir
         / "maturation_survival.pdf",
         "si_maturation_survival": supplementary_figure_dir
         / "Figure_S1_maturation_survival_all_temperatures.pdf",
@@ -1530,9 +1554,9 @@ def write_manuscript_comparison_figures(
     curves: dict[str, pd.DataFrame],
     direct_rates: pd.DataFrame,
     main_models: list[ModelSpec],
+    figure_dir: Path = MANUSCRIPT_FIGURE_DIR,
+    supplementary_figure_dir: Path = SUPPLEMENTARY_FIGURE_DIR,
 ) -> dict[str, Path]:
-    figure_dir = FIGURE_DIR
-    supplementary_figure_dir = SUPPLEMENTARY_FIGURE_DIR
     figure_dir.mkdir(parents=True, exist_ok=True)
     supplementary_figure_dir.mkdir(parents=True, exist_ok=True)
     paths = {

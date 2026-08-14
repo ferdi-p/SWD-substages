@@ -8,14 +8,17 @@ PROCESSED_DATA = \
 	data/processed/baser/adult_survival.csv \
 	data/processed/baser/fertility.csv
 
-.PHONY: all model analysis setup preprocess processed direct comparison \
-	intervention appendix-figure data-plots test verify-model verify help
+MODEL_PUBLICATION_FIGURE_DIR = outputs/plots/publication
+MODEL_SUPPLEMENTARY_FIGURE_DIR = $(MODEL_PUBLICATION_FIGURE_DIR)/supplementary
+MODEL_FIGURE_ARGS = \
+	--publication-figure-dir $(MODEL_PUBLICATION_FIGURE_DIR) \
+	--supplementary-figure-dir $(MODEL_SUPPLEMENTARY_FIGURE_DIR) \
+	--report outputs/reports/model_complexity.md
 
-all: model
+.PHONY: all setup preprocess processed direct model-comparison \
+	model-intervention model-appendix model data-plots test verify help
 
-model: direct intervention appendix-figure
-
-analysis: model data-plots
+all: verify
 
 setup:
 	python3 -m venv .venv
@@ -23,43 +26,44 @@ setup:
 	.venv/bin/python -m pip install -r requirements-lock.txt -e .
 
 preprocess:
-	$(PYTHON) scripts/preprocess_baser_data.py
+	"$(PYTHON)" scripts/preprocess_baser_data.py
 
 processed: $(PROCESSED_DATA)
 
 direct: processed
-	$(PYTHON) scripts/calculate_baser_direct.py
+	"$(PYTHON)" scripts/calculate_baser_direct.py
 
-comparison: processed
-	$(PYTHON) scripts/compare_model_complexity.py
+model-comparison: processed
+	"$(PYTHON)" scripts/compare_model_complexity.py $(MODEL_FIGURE_ARGS)
 
-intervention: comparison
-	$(PYTHON) scripts/analyze_mortality_interventions.py
+model-intervention: model-comparison
+	"$(PYTHON)" scripts/analyze_mortality_interventions.py \
+		--publication-figure-dir $(MODEL_PUBLICATION_FIGURE_DIR) \
+		--report outputs/reports/mortality_interventions.md
 
-appendix-figure: comparison
-	$(PYTHON) scripts/plot_m3_fecundity_profile.py
+model-appendix: model-comparison
+	"$(PYTHON)" scripts/plot_m3_fecundity_profile.py \
+		--output $(MODEL_PUBLICATION_FIGURE_DIR)/m3_adult_fecundity_profile.pdf
+
+model: direct model-intervention model-appendix
 
 data-plots: processed
-	$(PYTHON) scripts/plot_baser_life_history.py
+	"$(PYTHON)" scripts/plot_baser_life_history.py
 
 test:
-	$(PYTHON) -m pytest
+	"$(PYTHON)" -m pytest
 
-verify: test analysis
-	$(PYTHON) scripts/verify_outputs.py
-
-verify-model: test model
-	$(PYTHON) scripts/verify_outputs.py
+verify: test model
+	"$(PYTHON)" scripts/verify_paper_outputs.py --model-only
 
 help:
 	@echo "make setup       Create the exact tested Python environment"
-	@echo "make model       Rebuild the model analyses, tables, reports, and figures"
-	@echo "make verify-model Test, rebuild, and verify the model workflow"
-	@echo "make analysis    Model workflow plus raw-data summary plots"
-	@echo "make test        Run the unit tests"
-	@echo "make verify      Verify the model workflow plus raw-data summary plots"
+	@echo "make model       Rebuild all analyses, tables, and figures"
+	@echo "make data-plots  Plot the processed life-history inputs"
+	@echo "make test        Run the automated tests"
+	@echo "make verify      Test and verify the complete model workflow"
 	@echo "make preprocess  Recreate tracked CSVs from optional source workbooks"
 
 $(PROCESSED_DATA):
-	@echo "Processed data are missing; restore data/processed/baser or run make preprocess with the optional source workbooks."
+	@echo "Processed data are missing; restore data/processed/baser/ or run 'make preprocess' with the optional source workbooks."
 	@false

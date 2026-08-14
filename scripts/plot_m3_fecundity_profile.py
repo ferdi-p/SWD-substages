@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 import os
 import tempfile
 from pathlib import Path
@@ -12,21 +13,37 @@ matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import pandas as pd
 
-from r_r0_pop.paths import FIGURE_DIR, OUTPUT_DIR
+from r_r0_pop.paths import MANUSCRIPT_FIGURE_DIR, OUTPUT_DIR
 from r_r0_pop.plotting import clean_axis, save_figure
 
 
 M3_COLOR = "#c44536"
 
 
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Plot the fitted M3 adult-substage fecundity profile."
+    )
+    parser.add_argument(
+        "--output",
+        type=Path,
+        default=MANUSCRIPT_FIGURE_DIR / "m3_adult_fecundity_profile.pdf",
+        help=(
+            "Output figure path. The model-only workflow redirects this to "
+            "outputs/."
+        ),
+    )
+    return parser.parse_args()
+
+
 def main() -> None:
+    args = parse_args()
     profile_path = (
         OUTPUT_DIR / "model_complexity" / "adult_exit_chain_fecundity_profile.csv"
     )
     legacy_weights_path = (
         OUTPUT_DIR / "model_complexity" / "adult_exit_chain_fecundity_weights.csv"
     )
-    output = FIGURE_DIR / "m3_adult_fecundity_profile.pdf"
     profile = pd.read_csv(
         profile_path if profile_path.exists() else legacy_weights_path
     )
@@ -55,7 +72,7 @@ def main() -> None:
     ax.set_xlim(0.5, float(profile["adult_substage"].max()) + 0.5)
     ax.set_ylim(bottom=0.0)
     clean_axis(ax)
-    save_figure(fig, output)
+    save_figure(fig, args.output)
 
 
 if __name__ == "__main__":

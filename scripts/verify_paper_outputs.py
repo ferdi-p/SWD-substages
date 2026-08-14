@@ -2,18 +2,15 @@
 
 from __future__ import annotations
 
+import argparse
+import re
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
 
 from r_r0_pop.paper_config import PAPER_MODEL_KEYS
-from r_r0_pop.paths import (
-    FIGURE_DIR,
-    OUTPUT_DIR,
-    PROCESSED_DATA_DIR,
-    SUPPLEMENTARY_FIGURE_DIR,
-)
+from r_r0_pop.paths import MANUSCRIPT_DIR, OUTPUT_DIR, PROCESSED_DATA_DIR
 
 
 DIRECT_METRICS = ("R0", "r_euler", "generation_time_euler")
@@ -28,33 +25,38 @@ PROCESSED_SCHEMAS = {
         "eggs",
     },
 }
-EXPECTED_FIGURES = (
-    "mean_stage_durations.pdf",
-    "maturation_survival.pdf",
-    "juvenile_survival_mortality_temperature.pdf",
-    "fecundity_temperature.pdf",
-    "adult_reproduction_time.pdf",
-    "demographic_metrics.pdf",
-    "seasonal_simulation_composite.pdf",
-    "mortality_intervention_r_20C.pdf",
-    "m3_adult_fecundity_profile.pdf",
-)
-EXPECTED_SUPPLEMENTARY_FIGURES = (
-    "Figure_S1_maturation_survival_all_temperatures.pdf",
-    "Figure_S2_adult_reproduction_all_temperatures.pdf",
-)
+
+
+def parse_args() -> argparse.Namespace:
+    parser = argparse.ArgumentParser(
+        description="Verify model outputs and, optionally, manuscript figures."
+    )
+    parser.add_argument(
+        "--model-only",
+        action="store_true",
+        help="Verify the model and data workflow without requiring manuscript files.",
+    )
+    return parser.parse_args()
 
 
 def main() -> None:
+    args = parse_args()
     verify_processed_data()
     verify_direct_rates()
     verify_model_outputs()
     verify_intervention_outputs()
-    figure_count = verify_figures()
+    if args.model_only:
+        print(
+            "Verified three processed datasets, direct/model demographic "
+            f"agreement, all {len(PAPER_MODEL_KEYS)} paper models, and "
+            "intervention outputs."
+        )
+        return
+    figure_count = verify_manuscript_figures()
     print(
         "Verified three processed datasets, direct/model demographic agreement, "
-        f"all {len(PAPER_MODEL_KEYS)} models, intervention outputs, and "
-        f"{figure_count} generated figures."
+        f"all {len(PAPER_MODEL_KEYS)} paper models, intervention outputs, and "
+        f"{figure_count} manuscript figure references."
     )
 
 
@@ -97,10 +99,10 @@ def verify_model_outputs() -> None:
     observed_keys = tuple(summary["model"])
     if observed_keys != PAPER_MODEL_KEYS:
         raise RuntimeError(
-            f"Expected models {PAPER_MODEL_KEYS}; found {observed_keys}"
+            f"Expected paper models {PAPER_MODEL_KEYS}; found {observed_keys}"
         )
     if (summary["state_count"] <= 0).any():
-        raise RuntimeError("Every model must contain at least one state")
+        raise RuntimeError("Every paper model must contain at least one state")
     for metric in (
         "r_relative_sse",
         "R0_relative_sse",
@@ -117,21 +119,38 @@ def verify_intervention_outputs() -> None:
     observed_models = set(thresholds["model"])
     if observed_models != set(PAPER_MODEL_KEYS):
         raise RuntimeError(
-            "Mortality-intervention output does not contain exactly the expected models"
+            "Mortality-intervention output does not contain exactly the paper models"
         )
     if set(thresholds["intervention"]) != {"juvenile", "adult"}:
         raise RuntimeError("Expected both juvenile and adult intervention results")
 
 
-def verify_figures() -> int:
-    expected = tuple(FIGURE_DIR / name for name in EXPECTED_FIGURES) + tuple(
-        SUPPLEMENTARY_FIGURE_DIR / name
-        for name in EXPECTED_SUPPLEMENTARY_FIGURES
-    )
-    missing = [str(path) for path in expected if not path.is_file()]
+def verify_manuscript_figures() -> int:
+    manuscript = MANUSCRIPT_DIR / "popModels.tex"
+    text = manuscript.read_text(encoding="utf-8")
+    references = re.findall(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}", text)
+    missing = [
+        reference
+        for reference in references
+        if not (MANUSCRIPT_DIR / reference).is_file()
+    ]
     if missing:
-        raise RuntimeError(f"Missing generated figures: {missing}")
-    return len(expected)
+        raise RuntimeError(f"Missing manuscript figures: {missing}")
+
+    supplementary = (
+        MANUSCRIPT_DIR
+        / "supplementary_figures"
+        / "Figure_S1_maturation_survival_all_temperatures.pdf",
+        MANUSCRIPT_DIR
+        / "supplementary_figures"
+        / "Figure_S2_adult_reproduction_all_temperatures.pdf",
+    )
+    missing_supplementary = [str(path) for path in supplementary if not path.is_file()]
+    if missing_supplementary:
+        raise RuntimeError(
+            f"Missing supplementary figures: {missing_supplementary}"
+        )
+    return len(references) + len(supplementary)
 
 
 def read_required_csv(path: Path) -> pd.DataFrame:

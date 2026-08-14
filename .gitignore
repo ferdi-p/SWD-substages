@@ -1,5 +1,5 @@
 # Python environments and caches
-.venv
+.venv/
 .cache/
 .matplotlib-cache/
 .pytest_cache/
@@ -12,13 +12,30 @@ __pycache__/
 .vscode/
 tmp/
 *.bkp
+*.zip
 ~$*
+manuscript/snips
 
-# Optional raw source workbooks are not redistributed. The processed CSVs under
+# Optional source workbooks are not redistributed. The processed CSVs under
 # data/processed/baser/ are the version-controlled analysis inputs.
-data/raw/
 *.xls
 *.xlsx
 
-# Rebuildable analysis products
+# Rebuildable analysis products. Final manuscript/SI PDFs are exceptions below.
 outputs/
+outputs/public-repo/
+*.pdf
+!manuscript/figures/
+!manuscript/figures/*.pdf
+!manuscript/supplementary_figures/
+!manuscript/supplementary_figures/*.pdf
+
+# LaTeX build products
+*.aux
+*.bbl
+*.blg
+*.fdb_latexmk
+*.fls
+*.log
+*.out
+*.synctex.gz
