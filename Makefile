@@ -15,8 +15,8 @@ MODEL_FIGURE_ARGS = \
 	--supplementary-figure-dir $(MODEL_SUPPLEMENTARY_FIGURE_DIR) \
 	--report outputs/reports/model_complexity.md
 
-.PHONY: all setup preprocess processed direct model-comparison \
-	model-intervention model-appendix model data-plots test verify help
+.PHONY: all setup processed direct model-comparison \
+	model-intervention model-appendix model test verify help
 
 all: verify
 
@@ -24,9 +24,6 @@ setup:
 	python3 -m venv .venv
 	.venv/bin/python -m pip install --upgrade pip
 	.venv/bin/python -m pip install -r requirements-lock.txt -e .
-
-preprocess:
-	"$(PYTHON)" scripts/preprocess_baser_data.py
 
 processed: $(PROCESSED_DATA)
 
@@ -47,9 +44,6 @@ model-appendix: model-comparison
 
 model: direct model-intervention model-appendix
 
-data-plots: processed
-	"$(PYTHON)" scripts/plot_baser_life_history.py
-
 test:
 	"$(PYTHON)" -m pytest
 
@@ -59,11 +53,9 @@ verify: test model
 help:
 	@echo "make setup       Create the exact tested Python environment"
 	@echo "make model       Rebuild all analyses, tables, and figures"
-	@echo "make data-plots  Plot the processed life-history inputs"
 	@echo "make test        Run the automated tests"
 	@echo "make verify      Test and verify the complete model workflow"
-	@echo "make preprocess  Recreate tracked CSVs from optional source workbooks"
 
 $(PROCESSED_DATA):
-	@echo "Processed data are missing; restore data/processed/baser/ or run 'make preprocess' with the optional source workbooks."
+	@echo "Processed data are missing; restore the version-controlled files under data/processed/baser/."
 	@false

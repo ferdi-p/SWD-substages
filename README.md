@@ -34,7 +34,6 @@ For subsequent runs:
 make model       # rebuild all analyses, tables, and figures
 make test        # run the automated tests only
 make verify      # run tests and verify the complete workflow
-make data-plots  # create descriptive plots of the processed inputs
 make help        # list the available commands
 ```
 
@@ -43,8 +42,7 @@ make help        # list the available commands
 - `src/r_r0_pop/`: scientific implementation;
 - `scripts/`: reproducible analysis entry points;
 - `data/processed/baser/`: version-controlled analysis inputs;
-- `tests/`: automated tests;
-- `diagrams/diagrams.svg`: editable source for the model-structure diagram.
+- `tests/`: automated tests.
 
 The analysis reconstructs direct estimates of net reproductive rate (`R0`),
 intrinsic growth rate (`r`), and generation time; fits M1–M3; simulates seasonal
