@@ -185,7 +185,7 @@ def main() -> None:
 def load_main_models(model_dir: Path) -> tuple[ModelSpec, ...]:
     parameter_table = pd.read_csv(model_dir / "base_temperature_parameters.csv")
     base_parameters = life_history_parameters_from_table(parameter_table)
-    count_table = pd.read_csv(model_dir / "variance_matched_substage_counts.csv")
+    count_table = pd.read_csv(model_dir / "stage_substage_counts.csv")
     substage_counts = {
         str(row.stage_key): int(row.substage_count)
         for row in count_table.itertuples(index=False)
@@ -194,16 +194,8 @@ def load_main_models(model_dir: Path) -> tuple[ModelSpec, ...]:
     juvenile_substage_counts = {**substage_counts, "adult": 1}
 
     exit_profile_path = model_dir / "adult_exit_chain_fecundity_profile.csv"
-    if exit_profile_path.exists():
-        exit_profile = pd.read_csv(exit_profile_path)
-    else:
-        exit_profile = pd.read_csv(model_dir / "adult_exit_chain_fecundity_weights.csv")
-    profile_column = (
-        "fecundity_profile"
-        if "fecundity_profile" in exit_profile.columns
-        else "reproduction_weight"
-    )
-    exit_fecundity_profile_values = exit_profile[profile_column].to_numpy(
+    exit_profile = pd.read_csv(exit_profile_path)
+    exit_fecundity_profile_values = exit_profile["fecundity_profile"].to_numpy(
         dtype=float, copy=True
     )
     exit_fecundity_profile_values /= float(
@@ -235,7 +227,6 @@ def load_main_models(model_dir: Path) -> tuple[ModelSpec, ...]:
                 base_parameters,
                 daily_fecundity_response=None,
                 adult_fecundity_profile=exit_fecundity_profile,
-                adult_fecundity_weights=None,
                 adult_mortality_weights=None,
             ),
         ),

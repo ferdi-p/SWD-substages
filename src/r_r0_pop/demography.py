@@ -80,12 +80,12 @@ def build_reproduction_schedule(
     fertility: pd.DataFrame,
     female_preadult: pd.DataFrame,
     *,
-    offspring_sex_ratio: float = BASER_POOLED_ADULT_FEMALE_FRACTION,
+    offspring_female_fraction: float = BASER_POOLED_ADULT_FEMALE_FRACTION,
 ) -> pd.DataFrame:
     """Build age-specific lx and mx values from Baser individual fertility data.
 
     `mx` is expressed as female offspring per live female-day by multiplying egg
-    counts by `offspring_sex_ratio`. `lx` is conditional on an initial female
+    counts by `offspring_female_fraction`. `lx` is conditional on an initial female
     egg: it combines juvenile survival estimated from emergence of either sex
     with the observed adult female survival fraction in the fertility trial.
     Adult age begins at emergence. Each female's recorded preoviposition days
@@ -225,7 +225,7 @@ def build_reproduction_schedule(
                             * adult_survival
                             * float(preadult.preadult_weight)
                         ),
-                        "mx": eggs_per_live_female * offspring_sex_ratio,
+                        "mx": eggs_per_live_female * offspring_female_fraction,
                         "live_females": live_count,
                         "zero_fecundity_females": zero_fecundity_count,
                         "reproductive_females": reproductive_count,

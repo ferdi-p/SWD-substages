@@ -31,7 +31,7 @@ def test_reproduction_schedule_uses_juvenile_survival_without_initial_sex_ratio(
     schedule = build_reproduction_schedule(
         fertility,
         preadult,
-        offspring_sex_ratio=0.5,
+        offspring_female_fraction=0.5,
     )
 
     assert schedule.loc[0, "lx"] == 0.8
@@ -60,7 +60,7 @@ def test_reproduction_schedule_aligns_each_female_from_emergence():
     schedule = build_reproduction_schedule(
         fertility,
         preadult,
-        offspring_sex_ratio=0.5,
+        offspring_female_fraction=0.5,
     )
 
     assert schedule["adult_age_days"].tolist() == [0, 1, 2, 3]
@@ -101,7 +101,7 @@ def test_reproduction_schedule_ignores_trailing_missing_egg_records():
     schedule = build_reproduction_schedule(
         fertility,
         preadult,
-        offspring_sex_ratio=0.5,
+        offspring_female_fraction=0.5,
     )
 
     assert schedule["adult_age_days"].tolist() == [0, 1]
@@ -132,7 +132,7 @@ def test_reproduction_schedule_convolves_empirical_preadult_durations():
     schedule = build_reproduction_schedule(
         fertility,
         preadult,
-        offspring_sex_ratio=0.5,
+        offspring_female_fraction=0.5,
     )
 
     assert schedule["age_days"].tolist() == [4.0, 8.0]

@@ -13,9 +13,7 @@ BASER_POOLED_MALE_ADULTS = 105
 BASER_POOLED_ADULT_FEMALE_FRACTION_UNROUNDED = BASER_POOLED_FEMALE_ADULTS / (
     BASER_POOLED_FEMALE_ADULTS + BASER_POOLED_MALE_ADULTS
 )
-BASER_POOLED_ADULT_FEMALE_FRACTION = (
-    BASER_POOLED_ADULT_FEMALE_FRACTION_UNROUNDED
-)
+BASER_POOLED_ADULT_FEMALE_FRACTION = BASER_POOLED_ADULT_FEMALE_FRACTION_UNROUNDED
 
 
 @dataclass(frozen=True)
@@ -175,7 +173,9 @@ def load_baser_fertility(path: Path | str) -> pd.DataFrame:
             continue
 
         current = day_header_row + 1
-        while current <= ws.max_row and isinstance(ws.cell(current, 1).value, (int, float)):
+        while current <= ws.max_row and isinstance(
+            ws.cell(current, 1).value, (int, float)
+        ):
             adult_day = int(ws.cell(current, 1).value)
             for female_idx in range(1, 11):
                 eggs = _optional_numeric(ws.cell(current, female_idx + 1).value)
@@ -263,8 +263,12 @@ def female_preadult_summary(
     measured for adult females.
     """
 
-    female_adults = adult_survival.loc[adult_survival["AF"] > 0, ["temperature", "specimen"]]
-    merged = female_adults.merge(development, on=["temperature", "specimen"], how="left")
+    female_adults = adult_survival.loc[
+        adult_survival["AF"] > 0, ["temperature", "specimen"]
+    ]
+    merged = female_adults.merge(
+        development, on=["temperature", "specimen"], how="left"
+    )
     merged["preadult_days"] = merged[list(PREIMAGINAL_STAGES)].sum(axis=1)
     timing = (
         merged.groupby("temperature", as_index=False)
@@ -349,7 +353,9 @@ def pooled_adult_female_fraction(adult_survival: pd.DataFrame) -> float:
         raise ValueError("Adult records cannot be both female and male.")
     adult_count = int((female | male).sum())
     if adult_count == 0:
-        raise ValueError("Cannot estimate sex ratio because no sexed adults were found.")
+        raise ValueError(
+            "Cannot estimate the female fraction because no sexed adults were found."
+        )
     return float(female.sum() / adult_count)
 
 

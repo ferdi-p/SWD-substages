@@ -1,9 +1,11 @@
 import math
 
 import pandas as pd
+import pytest
 
 from r_r0_pop.life_history_fits import (
     adult_substage_occupancy_with_mortality,
+    adult_delay_summary,
     fit_juvenile_mortality,
     fit_adult_mortality_rate,
     fit_q10_deactivation_response,
@@ -17,11 +19,14 @@ from r_r0_pop.life_history_fits import (
     juvenile_mortality_summary,
     juvenile_mortality_summary_for_stage_chain,
     juvenile_mortality_rate_for_stage_chain,
+    maturation_delay_summary,
     parametric_adult_timing_weights,
     predict,
     q10_deactivation_delay,
     q10_deactivation_inv,
-    q10_deactivation_rate,
+    q10_deactivation_response,
+    skew_gauss_peak,
+    stage_duration_observations,
     variance_matched_stage_counts,
 )
 from r_r0_pop.population_model import (
@@ -45,12 +50,14 @@ from r_r0_pop.population_model import (
 
 
 def simple_life_history_parameters() -> LifeHistoryParameters:
-    delay = TemperatureResponse("delay", "gauss", 2.0, 24.0, 1e9)
+    delay = TemperatureResponse("delay", "gauss", (2.0, 24.0, 1e9))
     juvenile_mortality = TemperatureResponse(
-        "juvenile mortality", "gauss", 0.02, 24.0, 1e9
+        "juvenile mortality", "gauss", (0.02, 24.0, 1e9)
     )
-    adult_delay = TemperatureResponse("adult delay", "gauss", 10.0, 24.0, 1e9)
-    lifetime_fecundity = TemperatureResponse("fecundity", "gauss", 20.0, 24.0, 1e9)
+    adult_delay = TemperatureResponse("adult delay", "gauss", (10.0, 24.0, 1e9))
+    lifetime_fecundity = TemperatureResponse(
+        "fecundity", "gauss", (20.0, 24.0, 1e9)
+    )
     return LifeHistoryParameters(
         egg_delay=delay,
         larva_delay=delay,
@@ -61,6 +68,39 @@ def simple_life_history_parameters() -> LifeHistoryParameters:
     )
 
 
+def test_stage_duration_summaries_use_recorded_durations():
+    development = pd.DataFrame(
+        {
+            "temperature": [20.0, 20.0],
+            "E": [1.0, 2.0],
+            "L1": [1.0, 1.0],
+            "L2": [1.0, 1.0],
+            "L3": [1.0, 1.0],
+            "P": [2.0, 3.0],
+        }
+    )
+    adult_survival = pd.DataFrame(
+        {
+            "temperature": [20.0, 20.0],
+            "AM": [4.0, 0.0],
+            "AF": [0.0, 6.0],
+        }
+    )
+    fertility = pd.DataFrame()
+
+    juvenile = maturation_delay_summary(development, fertility).set_index("stage")
+    adult = adult_delay_summary(adult_survival).iloc[0]
+    observations = stage_duration_observations(development, adult_survival, fertility)
+
+    assert juvenile.loc["Egg", "value"] == pytest.approx(1.5)
+    assert juvenile.loc["Larva", "value"] == pytest.approx(3.0)
+    assert juvenile.loc["Pupa", "value"] == pytest.approx(2.5)
+    assert adult["value"] == pytest.approx(6.0)
+    assert observations.loc[
+        observations["stage"] == "Larva", "duration"
+    ].tolist() == pytest.approx([3.0, 3.0])
+
+
 def test_default_stage_counts_match_manuscript_m2_baseline():
     assert DEFAULT_STAGE_COUNTS == MANUSCRIPT_M2_STAGE_COUNTS
     assert MANUSCRIPT_M1_STAGE_COUNTS == {
@@ -69,11 +109,17 @@ def test_default_stage_counts_match_manuscript_m2_baseline():
         "pupa": 1,
         "adult": 1,
     }
-    assert MANUSCRIPT_M3_STAGE_COUNTS == {
-        "egg": 20,
+    assert MANUSCRIPT_M2_STAGE_COUNTS == {
+        "egg": 14,
         "larva": 40,
         "pupa": 40,
-        "adult": 16,
+        "adult": 1,
+    }
+    assert MANUSCRIPT_M3_STAGE_COUNTS == {
+        "egg": 14,
+        "larva": 40,
+        "pupa": 40,
+        "adult": 15,
     }
 
 
@@ -131,9 +177,13 @@ def test_fixed_temperature_model_rates_are_finite():
 
 
 def test_net_reproductive_rate_counts_all_adult_substages():
-    delay = TemperatureResponse("delay", "gauss", 2.0, 24.0, 1e9)
-    no_mortality = TemperatureResponse("no mortality", "gauss", 0.0, 24.0, 1e9)
-    lifetime_fecundity = TemperatureResponse("fecundity", "gauss", 8.0, 24.0, 1e9)
+    delay = TemperatureResponse("delay", "gauss", (2.0, 24.0, 1e9))
+    no_mortality = TemperatureResponse(
+        "no mortality", "gauss", (0.0, 24.0, 1e9)
+    )
+    lifetime_fecundity = TemperatureResponse(
+        "fecundity", "gauss", (8.0, 24.0, 1e9)
+    )
     parameters = LifeHistoryParameters(
         egg_delay=delay,
         larva_delay=delay,
@@ -156,9 +206,13 @@ def test_net_reproductive_rate_counts_all_adult_substages():
 
 
 def test_model_generation_time_matches_single_reproductive_delay():
-    delay = TemperatureResponse("delay", "gauss", 1.0, 24.0, 1e9)
-    no_mortality = TemperatureResponse("no mortality", "gauss", 0.0, 24.0, 1e9)
-    lifetime_fecundity = TemperatureResponse("fecundity", "gauss", 4.0, 24.0, 1e9)
+    delay = TemperatureResponse("delay", "gauss", (1.0, 24.0, 1e9))
+    no_mortality = TemperatureResponse(
+        "no mortality", "gauss", (0.0, 24.0, 1e9)
+    )
+    lifetime_fecundity = TemperatureResponse(
+        "fecundity", "gauss", (4.0, 24.0, 1e9)
+    )
     parameters = LifeHistoryParameters(
         egg_delay=delay,
         larva_delay=delay,
@@ -186,34 +240,9 @@ def test_fixed_temperature_matrix_has_expected_shape():
     assert matrix.shape == (expected_size, expected_size)
 
 
-def test_fixed_temperature_matrix_uses_adult_substage_fecundity_weights():
-    response = TemperatureResponse("constant", "gauss", 1.0, 24.0, 1e9)
-    parameters = LifeHistoryParameters(
-        egg_delay=response,
-        larva_delay=response,
-        pupa_delay=response,
-        juvenile_mortality=response,
-        adult_delay=response,
-        lifetime_fecundity=response,
-        female_fraction=0.5,
-        adult_fecundity_weights=(0.0, 2.0),
-    )
-    counts = {
-        "egg": 1,
-        "larva": 1,
-        "pupa": 1,
-        "adult": 2,
-    }
-
-    matrix = fixed_temperature_matrix(parameters, 24.0, counts)
-    adult_slice = slice(3, 5)
-
-    assert list(matrix[0, adult_slice]) == [0.0, 1.0]
-
-
 def test_fixed_temperature_matrix_uses_adult_substage_fecundity_profile():
-    response = TemperatureResponse("constant", "gauss", 1.0, 24.0, 1e9)
-    peak_response = TemperatureResponse("peak", "gauss", 3.0, 24.0, 1e9)
+    response = TemperatureResponse("constant", "gauss", (1.0, 24.0, 1e9))
+    peak_response = TemperatureResponse("peak", "gauss", (3.0, 24.0, 1e9))
     parameters = LifeHistoryParameters(
         egg_delay=response,
         larva_delay=response,
@@ -239,8 +268,8 @@ def test_fixed_temperature_matrix_uses_adult_substage_fecundity_profile():
 
 
 def test_daily_fecundity_response_overrides_lifetime_divided_by_adult_delay():
-    response = TemperatureResponse("constant", "gauss", 1.0, 24.0, 1e9)
-    daily_response = TemperatureResponse("daily", "gauss", 3.0, 24.0, 1e9)
+    response = TemperatureResponse("constant", "gauss", (1.0, 24.0, 1e9))
+    daily_response = TemperatureResponse("daily", "gauss", (3.0, 24.0, 1e9))
     parameters = LifeHistoryParameters(
         egg_delay=response,
         larva_delay=response,
@@ -269,31 +298,67 @@ def test_model_demographic_rates_returns_requested_temperatures():
 
 
 def test_life_history_parameter_table_preserves_skew_parameter():
-    rows = []
-    for name, function in [
-        ("Egg", "gaussinv"),
-        ("Larva", "gaussinv"),
-        ("Pupa", "gaussinv"),
-        ("Juvenile mortality rate", "skew_gaussinv"),
-        ("Adult mortality delay", "skew_gauss"),
-        ("Lifetime fecundity", "skew_gauss"),
-    ]:
-        rows.append(
+    rows = [
+        {
+            "name": name,
+            "function": "gaussinv",
+            "minimum": 1.0,
+            "minimum_temperature": 24.0,
+            "sigma": 10.0,
+        }
+        for name in ("Egg", "Larva", "Pupa")
+    ]
+    rows.extend(
+        [
             {
-                "name": name,
-                "function": function,
-                "c1": 1.0,
-                "c2": 24.0,
-                "c3": 10.0,
-                "c4": 2.0 if function.startswith("skew") else float("nan"),
-            }
-        )
+                "name": "Juvenile mortality rate",
+                "function": "skew_gaussinv",
+                "scale": 1.0,
+                "location_temperature": 24.0,
+                "sigma": 10.0,
+                "skew": 2.0,
+            },
+            {
+                "name": "Adult duration",
+                "function": "skew_gauss",
+                "scale": 1.0,
+                "location_temperature": 24.0,
+                "sigma": 10.0,
+                "skew": 2.0,
+            },
+            {
+                "name": "Lifetime fecundity",
+                "function": "skew_gauss_peak",
+                "maximum": 1.0,
+                "optimum_temperature": 24.0,
+                "sigma": 10.0,
+                "skew": 2.0,
+            },
+        ]
+    )
 
     parameters = life_history_parameters_from_table(pd.DataFrame(rows))
 
     assert parameters.adult_delay.function == "skew_gauss"
-    assert parameters.adult_delay.c4 == 2.0
+    assert parameters.adult_delay.parameters[3] == 2.0
     assert math.isfinite(float(parameters.adult_delay(24.0)))
+    assert float(parameters.lifetime_fecundity(24.0)) == pytest.approx(1.0)
+
+
+def test_inverse_gaussian_fit_serializes_width_as_sigma():
+    fit = FitResult(
+        name="Juvenile mortality rate",
+        function="gaussinv",
+        parameters=(0.02, 16.0, 10.0),
+        rss=0.0,
+        r2=1.0,
+        n=3,
+    )
+
+    serialized = fit.as_dict()
+
+    assert serialized["sigma"] == 10.0
+    assert "temperature_breadth" not in serialized
 
 
 def test_adult_substage_occupancy_with_mortality_is_normalized():
@@ -391,7 +456,7 @@ def test_log_shared_stage_delay_fit_returns_positive_stage_responses():
 
     assert set(fits) == {"Egg", "Larva", "Pupa"}
     assert all(fit.function == "gaussinv" for fit in fits.values())
-    assert all(fit.c1 > 0 for fit in fits.values())
+    assert all(fit.parameters[0] > 0 for fit in fits.values())
 
 
 def test_shared_stage_rate_fit_returns_equivalent_delay_responses():
@@ -407,7 +472,7 @@ def test_shared_stage_rate_fit_returns_equivalent_delay_responses():
 
     assert set(fits) == {"Egg", "Larva", "Pupa"}
     assert all(fit.function == "gaussinv" for fit in fits.values())
-    assert all(fit.c1 > 0 for fit in fits.values())
+    assert all(fit.parameters[0] > 0 for fit in fits.values())
 
 
 def test_stage_specific_rate_fits_return_delay_responses():
@@ -419,17 +484,15 @@ def test_stage_specific_rate_fits_return_delay_responses():
     )
 
     gauss_fit = fit_stage_development_rate(observations, "Egg")
-    q10_fit = fit_stage_delay_q10_deactivation(
-        observations, "Egg"
-    )
+    q10_fit = fit_stage_delay_q10_deactivation(observations, "Egg")
 
     assert gauss_fit.function == "gaussinv"
     assert q10_fit.function == "q10_deactivation_delay"
-    assert gauss_fit.c1 > 0
-    assert q10_fit.c1 > 0
-    assert q10_fit.c2 > 0
-    assert q10_fit.c4 > 0
-    assert math.isclose(float(predict(q10_fit, 20.0)), q10_fit.c1)
+    assert gauss_fit.parameters[0] > 0
+    assert q10_fit.parameters[0] > 0
+    assert q10_fit.parameters[1] > 0
+    assert q10_fit.parameters[3] > 0
+    assert math.isclose(float(predict(q10_fit, 20.0)), q10_fit.parameters[0])
 
 
 def test_q10_deactivation_temperature_responses_round_trip_from_table():
@@ -438,50 +501,46 @@ def test_q10_deactivation_temperature_responses_round_trip_from_table():
             {
                 "name": "Egg",
                 "function": "q10_deactivation_delay",
-                "c1": 5.0,
-                "c2": 2.0,
-                "c3": 28.0,
-                "c4": 0.3,
+                "delay_at_20": 5.0,
+                "q10": 2.0,
+                "deactivation_temperature": 28.0,
+                "deactivation_steepness": 0.3,
             },
             {
                 "name": "Larva",
                 "function": "q10_deactivation_delay",
-                "c1": 12.5,
-                "c2": 3.0,
-                "c3": 30.0,
-                "c4": 0.4,
+                "delay_at_20": 12.5,
+                "q10": 3.0,
+                "deactivation_temperature": 30.0,
+                "deactivation_steepness": 0.4,
             },
             {
                 "name": "Pupa",
                 "function": "gaussinv",
-                "c1": 4.0,
-                "c2": 25.0,
-                "c3": 10.0,
-                "c4": float("nan"),
+                "minimum": 4.0,
+                "minimum_temperature": 25.0,
+                "sigma": 10.0,
             },
             {
                 "name": "Juvenile mortality rate",
                 "function": "gaussinv",
-                "c1": 0.01,
-                "c2": 16.0,
-                "c3": 10.0,
-                "c4": float("nan"),
+                "minimum": 0.01,
+                "minimum_temperature": 16.0,
+                "sigma": 10.0,
             },
             {
-                "name": "Adult mortality delay",
+                "name": "Adult duration",
                 "function": "gauss",
-                "c1": 20.0,
-                "c2": 25.0,
-                "c3": 10.0,
-                "c4": float("nan"),
+                "maximum": 20.0,
+                "optimum_temperature": 25.0,
+                "sigma": 10.0,
             },
             {
                 "name": "Lifetime fecundity",
                 "function": "gauss",
-                "c1": 100.0,
-                "c2": 25.0,
-                "c3": 10.0,
-                "c4": float("nan"),
+                "maximum": 100.0,
+                "optimum_temperature": 25.0,
+                "sigma": 10.0,
             },
         ]
     )
@@ -494,7 +553,7 @@ def test_q10_deactivation_temperature_responses_round_trip_from_table():
 
 
 def test_q10_deactivation_response_is_normalized_at_20_c():
-    response = q10_deactivation_rate(20.0, 0.25, 2.5, 28.0, 0.4)
+    response = q10_deactivation_response(20.0, 0.25, 2.5, 28.0, 0.4)
     inverse = q10_deactivation_inv(20.0, 0.25, 2.5, 28.0, 0.4)
     delay = q10_deactivation_delay(20.0, 4.0, 2.5, 28.0, 0.4)
 
@@ -503,14 +562,35 @@ def test_q10_deactivation_response_is_normalized_at_20_c():
     assert math.isclose(float(delay), 4.0)
 
 
+def test_skew_gaussian_peak_parameters_are_the_actual_peak():
+    maximum = 210.0
+    optimum_temperature = 23.8
+
+    at_optimum = skew_gauss_peak(
+        optimum_temperature,
+        maximum,
+        optimum_temperature,
+        10.6,
+        -4.5,
+    )
+    nearby = skew_gauss_peak(
+        [optimum_temperature - 0.1, optimum_temperature + 0.1],
+        maximum,
+        optimum_temperature,
+        10.6,
+        -4.5,
+    )
+
+    assert float(at_optimum) == pytest.approx(maximum)
+    assert all(value < maximum for value in nearby)
+
+
 def test_juvenile_mortality_fit_can_target_survival_probability():
     stage_fits = {
         stage: FitResult(
             name=stage,
             function="gauss",
-            c1=2.0,
-            c2=24.0,
-            c3=1e9,
+            parameters=(2.0, 24.0, 1e9),
             rss=0.0,
             r2=1.0,
             n=4,
@@ -563,7 +643,7 @@ def test_juvenile_mortality_fit_can_target_survival_probability():
     fitted_survival = juvenile_survival_from_mortality_response(
         observations["temperature"].to_numpy(dtype=float),
         gaussinv,
-        (fit.c1, fit.c2, fit.c3),
+        fit.parameters,
         stage_fits=stage_fits,
         stage_counts=stage_counts,
     )
@@ -616,10 +696,10 @@ def test_adult_mortality_rate_fits_return_positive_rates():
     gauss_fit = fit_adult_mortality_rate(observations)
     q10_fit = fit_q10_deactivation_response(
         observations,
-        name="Adult mortality delay",
+        name="Adult duration",
     )
 
     assert gauss_fit.function == "gaussinv"
-    assert q10_fit.function == "q10_deactivation_rate"
-    assert gauss_fit.c1 > 0
-    assert q10_fit.c1 > 0
+    assert q10_fit.function == "q10_deactivation_response"
+    assert gauss_fit.parameters[0] > 0
+    assert q10_fit.parameters[0] > 0

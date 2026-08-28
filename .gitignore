@@ -21,6 +21,9 @@ manuscript/snips
 *.xls
 *.xlsx
 
+# Local copies of cited literature (not shared through Git)
+/references/papers/
+
 # Rebuildable analysis products. Final manuscript/SI PDFs are exceptions below.
 outputs/
 outputs/public-repo/

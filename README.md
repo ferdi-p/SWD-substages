@@ -49,10 +49,10 @@ intrinsic growth rate (`r`), and generation time; fits M1–M3; simulates season
 population dynamics; and evaluates juvenile- and adult-targeted mortality
 scenarios. All analysis entry points accept `--help`.
 
-## Data
+## Data provenance
 
 The processed inputs are direct transformations of the life-table and
-fertility workbooks from:
+fertility workbooks associated with:
 
 > Baser et al. (2025), “Thermal Development, Mortality, and Fertility of an
 > Apulian Strain of *Drosophila suzukii* at Different Temperatures,” *Insects*

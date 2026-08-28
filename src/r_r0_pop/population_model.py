@@ -10,15 +10,16 @@ from scipy.integrate import solve_ivp
 
 from r_r0_pop.data import BASER_POOLED_ADULT_FEMALE_FRACTION
 from r_r0_pop.life_history_fits import (
+    FUNCTION_PARAMETER_NAMES,
     competing_risk_transition_rate,
     double_logistic_mortality,
     gauss,
     gaussinv,
-    gaussinvgentle,
     q10_deactivation_delay,
     q10_deactivation_inv,
-    q10_deactivation_rate,
+    q10_deactivation_response,
     skew_gauss,
+    skew_gauss_peak,
     skew_gaussinv,
 )
 
@@ -31,17 +32,17 @@ MANUSCRIPT_M1_STAGE_COUNTS = {
 }
 
 MANUSCRIPT_M2_STAGE_COUNTS = {
-    "egg": 20,
+    "egg": 14,
     "larva": 40,
     "pupa": 40,
     "adult": 1,
 }
 
 MANUSCRIPT_M3_STAGE_COUNTS = {
-    "egg": 20,
+    "egg": 14,
     "larva": 40,
     "pupa": 40,
-    "adult": 16,
+    "adult": 15,
 }
 
 MANUSCRIPT_STAGE_COUNTS = {
@@ -57,48 +58,21 @@ DEFAULT_STAGE_COUNTS = MANUSCRIPT_M2_STAGE_COUNTS
 class TemperatureResponse:
     name: str
     function: str
-    c1: float
-    c2: float
-    c3: float
-    c4: float = np.nan
-    c5: float = np.nan
-    c6: float = np.nan
-    c7: float = np.nan
+    parameters: tuple[float, ...]
 
     def __call__(self, temperature: float | np.ndarray) -> np.ndarray:
         functions = {
             "gauss": gauss,
             "gaussinv": gaussinv,
-            "gaussinvgentle": gaussinvgentle,
             "q10_deactivation_delay": q10_deactivation_delay,
-            "q10_deactivation_rate": q10_deactivation_rate,
+            "q10_deactivation_response": q10_deactivation_response,
             "q10_deactivation_inv": q10_deactivation_inv,
             "double_logistic_mortality": double_logistic_mortality,
             "skew_gauss": skew_gauss,
+            "skew_gauss_peak": skew_gauss_peak,
             "skew_gaussinv": skew_gaussinv,
         }
-        if self.function == "double_logistic_mortality":
-            return functions[self.function](
-                temperature,
-                self.c1,
-                self.c2,
-                self.c3,
-                self.c4,
-                self.c5,
-                self.c6,
-                self.c7,
-            )
-        if self.function in {
-            "skew_gauss",
-            "skew_gaussinv",
-            "q10_deactivation_delay",
-            "q10_deactivation_rate",
-            "q10_deactivation_inv",
-        }:
-            return functions[self.function](
-                temperature, self.c1, self.c2, self.c3, self.c4
-            )
-        return functions[self.function](temperature, self.c1, self.c2, self.c3)
+        return functions[self.function](temperature, *self.parameters)
 
 
 @dataclass(frozen=True)
@@ -112,7 +86,6 @@ class LifeHistoryParameters:
     daily_fecundity_response: TemperatureResponse | None = None
     female_fraction: float = BASER_POOLED_ADULT_FEMALE_FRACTION
     adult_fecundity_profile: tuple[float, ...] | None = None
-    adult_fecundity_weights: tuple[float, ...] | None = None
     adult_mortality_weights: tuple[float, ...] | None = None
 
     def daily_fecundity(self, temperature: float | np.ndarray) -> np.ndarray:
@@ -124,8 +97,6 @@ class LifeHistoryParameters:
         self, temperature: float | np.ndarray, adult_stage_count: int
     ) -> np.ndarray:
         profile = self.adult_fecundity_profile
-        if profile is None:
-            profile = self.adult_fecundity_weights
         profile_values = (
             np.ones(adult_stage_count, dtype=float)
             if profile is None
@@ -193,16 +164,12 @@ def life_history_parameters_from_table(table: pd.DataFrame) -> LifeHistoryParame
 
     def response(name: str) -> TemperatureResponse:
         row = params.loc[name]
+        function = str(row["function"])
+        parameter_names = FUNCTION_PARAMETER_NAMES[function]
         return TemperatureResponse(
             name=name,
-            function=str(row["function"]),
-            c1=float(row["c1"]),
-            c2=float(row["c2"]),
-            c3=float(row["c3"]),
-            c4=float(row["c4"]) if "c4" in row and pd.notna(row["c4"]) else np.nan,
-            c5=float(row["c5"]) if "c5" in row and pd.notna(row["c5"]) else np.nan,
-            c6=float(row["c6"]) if "c6" in row and pd.notna(row["c6"]) else np.nan,
-            c7=float(row["c7"]) if "c7" in row and pd.notna(row["c7"]) else np.nan,
+            function=function,
+            parameters=tuple(float(row[column]) for column in parameter_names),
         )
 
     return LifeHistoryParameters(
@@ -210,7 +177,7 @@ def life_history_parameters_from_table(table: pd.DataFrame) -> LifeHistoryParame
         larva_delay=response("Larva"),
         pupa_delay=response("Pupa"),
         juvenile_mortality=response("Juvenile mortality rate"),
-        adult_delay=response("Adult mortality delay"),
+        adult_delay=response("Adult duration"),
         lifetime_fecundity=response("Lifetime fecundity"),
     )
 

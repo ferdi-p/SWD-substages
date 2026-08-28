@@ -12,7 +12,6 @@ from scipy.linalg import expm
 from scipy.special import erf
 from scipy.stats import gamma as gamma_distribution
 
-
 STAGES = ("Egg", "Larva", "Pupa")
 STAGE_COUNT_KEYS = {
     "Egg": "egg",
@@ -20,21 +19,46 @@ STAGE_COUNT_KEYS = {
     "Pupa": "pupa",
     "Adult": "adult",
 }
-BASER_INSPECTION_INTERVAL_DAYS = {
-    6.0: 24.0 / 24.0,
-    9.0: 24.0 / 24.0,
-    13.0: 24.0 / 24.0,
-    18.0: 8.0 / 24.0,
-    20.0: 8.0 / 24.0,
-    24.0: 6.0 / 24.0,
-    25.0: 6.0 / 24.0,
-    26.0: 6.0 / 24.0,
-    27.0: 6.0 / 24.0,
-    28.0: 4.0 / 24.0,
-    29.0: 4.0 / 24.0,
-    31.0: 2.0 / 24.0,
-    32.0: 2.0 / 24.0,
-    33.0: 2.0 / 24.0,
+
+FUNCTION_PARAMETER_NAMES = {
+    "gauss": ("maximum", "optimum_temperature", "sigma"),
+    "gaussinv": ("minimum", "minimum_temperature", "sigma"),
+    "q10_deactivation_response": (
+        "response_at_20",
+        "q10",
+        "deactivation_temperature",
+        "deactivation_steepness",
+    ),
+    "q10_deactivation_inv": (
+        "response_at_20",
+        "q10",
+        "deactivation_temperature",
+        "deactivation_steepness",
+    ),
+    "q10_deactivation_delay": (
+        "delay_at_20",
+        "q10",
+        "deactivation_temperature",
+        "deactivation_steepness",
+    ),
+    "double_logistic_mortality": (
+        "minimum",
+        "cold_increment",
+        "cold_midpoint",
+        "cold_steepness",
+        "hot_increment",
+        "hot_midpoint",
+        "hot_steepness",
+    ),
+    "skew_gauss": ("scale", "location_temperature", "sigma", "skew"),
+    "skew_gauss_peak": ("maximum", "optimum_temperature", "sigma", "skew"),
+    "skew_gaussinv": (
+        "scale",
+        "location_temperature",
+        "sigma",
+        "skew",
+    ),
+    "normalized_gaussian_adult_fecundity_profile": ("peak_location", "sigma"),
 }
 
 
@@ -42,32 +66,27 @@ BASER_INSPECTION_INTERVAL_DAYS = {
 class FitResult:
     name: str
     function: str
-    c1: float
-    c2: float
-    c3: float
+    parameters: tuple[float, ...]
     rss: float
     r2: float
     n: int
-    c4: float = np.nan
-    c5: float = np.nan
-    c6: float = np.nan
-    c7: float = np.nan
 
     def as_dict(self) -> dict[str, float | int | str]:
-        return {
+        parameter_names = FUNCTION_PARAMETER_NAMES[self.function]
+        if len(parameter_names) != len(self.parameters):
+            raise ValueError(
+                f"Expected {len(parameter_names)} parameters for {self.function}; "
+                f"found {len(self.parameters)}."
+            )
+        result: dict[str, float | int | str] = {
             "name": self.name,
             "function": self.function,
-            "c1": self.c1,
-            "c2": self.c2,
-            "c3": self.c3,
-            "c4": self.c4,
-            "c5": self.c5,
-            "c6": self.c6,
-            "c7": self.c7,
             "rss": self.rss,
             "r2": self.r2,
             "n": self.n,
         }
+        result.update(zip(parameter_names, self.parameters))
+        return result
 
 
 @dataclass(frozen=True)
@@ -107,46 +126,46 @@ class AdultTimingProfileFit:
         )
 
 
-def gauss(temperature: np.ndarray | float, c1: float, c2: float, c3: float) -> np.ndarray:
+def gauss(
+    temperature: np.ndarray | float,
+    maximum: float,
+    optimum_temperature: float,
+    sigma: float,
+) -> np.ndarray:
     temperature = np.asarray(temperature, dtype=float)
-    return c1 * np.exp(-((c2 - temperature) / c3) ** 2)
+    return maximum * np.exp(-(((optimum_temperature - temperature) / sigma) ** 2))
 
 
 def gaussinv(
-    temperature: np.ndarray | float, c1: float, c2: float, c3: float
+    temperature: np.ndarray | float,
+    minimum: float,
+    minimum_temperature: float,
+    sigma: float,
 ) -> np.ndarray:
     temperature = np.asarray(temperature, dtype=float)
-    return c1 * np.exp(((c2 - temperature) / c3) ** 2)
+    return minimum * np.exp(((minimum_temperature - temperature) / sigma) ** 2)
 
 
-def gaussinvgentle(
-    temperature: np.ndarray | float, c1: float, c2: float, c3: float
-) -> np.ndarray:
-    temperature = np.asarray(temperature, dtype=float)
-    return c1 * np.exp(np.abs(c2 - temperature) / c3)
-
-
-def q10_deactivation_rate(
+def q10_deactivation_response(
     temperature: np.ndarray | float,
     response_at_reference: float,
     q10: float,
-    high_temperature: float,
-    deactivation_slope: float,
+    deactivation_temperature: float,
+    deactivation_steepness: float,
 ) -> np.ndarray:
     """Positive Q10 response with normalized logistic high-temperature decline."""
 
     temperature = np.asarray(temperature, dtype=float)
     reference_temperature = 20.0
     q10 = np.maximum(q10, 1e-12)
-    deactivation_slope = np.maximum(deactivation_slope, 1e-12)
-    log_activation = (
-        np.log(q10) * (temperature - reference_temperature) / 10.0
-    )
+    deactivation_steepness = np.maximum(deactivation_steepness, 1e-12)
+    log_activation = np.log(q10) * (temperature - reference_temperature) / 10.0
     reference_deactivation = np.logaddexp(
-        0.0, deactivation_slope * (reference_temperature - high_temperature)
+        0.0,
+        deactivation_steepness * (reference_temperature - deactivation_temperature),
     )
     deactivation = np.logaddexp(
-        0.0, deactivation_slope * (temperature - high_temperature)
+        0.0, deactivation_steepness * (temperature - deactivation_temperature)
     )
     return response_at_reference * np.exp(
         log_activation + reference_deactivation - deactivation
@@ -157,17 +176,17 @@ def q10_deactivation_inv(
     temperature: np.ndarray | float,
     response_at_reference: float,
     q10: float,
-    high_temperature: float,
-    deactivation_slope: float,
+    deactivation_temperature: float,
+    deactivation_steepness: float,
 ) -> np.ndarray:
     """Reciprocal Q10 response parameterized by the reference response rate."""
 
-    rate = q10_deactivation_rate(
+    rate = q10_deactivation_response(
         temperature,
         response_at_reference,
         q10,
-        high_temperature,
-        deactivation_slope,
+        deactivation_temperature,
+        deactivation_steepness,
     )
     return 1.0 / np.maximum(rate, 1e-12)
 
@@ -176,8 +195,8 @@ def q10_deactivation_delay(
     temperature: np.ndarray | float,
     delay_at_reference: float,
     q10: float,
-    high_temperature: float,
-    deactivation_slope: float,
+    deactivation_temperature: float,
+    deactivation_steepness: float,
 ) -> np.ndarray:
     """Mean delay whose reciprocal follows the Q10 development-rate response."""
 
@@ -185,49 +204,88 @@ def q10_deactivation_delay(
         temperature,
         1.0 / np.maximum(delay_at_reference, 1e-12),
         q10,
-        high_temperature,
-        deactivation_slope,
+        deactivation_temperature,
+        deactivation_steepness,
     )
 
 
 def double_logistic_mortality(
     temperature: np.ndarray | float,
-    c1: float,
-    c2: float,
-    c3: float,
-    c4: float,
-    c5: float,
-    c6: float,
-    c7: float,
+    minimum: float,
+    cold_increment: float,
+    cold_midpoint: float,
+    cold_steepness: float,
+    hot_increment: float,
+    hot_midpoint: float,
+    hot_steepness: float,
 ) -> np.ndarray:
     temperature = np.asarray(temperature, dtype=float)
-    cold = c2 / (1.0 + np.exp(c4 * (temperature - c3)))
-    hot = c5 / (1.0 + np.exp(-c7 * (temperature - c6)))
-    return c1 + cold + hot
+    cold = cold_increment / (
+        1.0 + np.exp(cold_steepness * (temperature - cold_midpoint))
+    )
+    hot = hot_increment / (
+        1.0 + np.exp(-hot_steepness * (temperature - hot_midpoint))
+    )
+    return minimum + cold + hot
 
 
 def skew_gauss(
     temperature: np.ndarray | float,
-    c1: float,
-    c2: float,
-    c3: float,
-    c4: float,
+    scale: float,
+    location_temperature: float,
+    sigma: float,
+    skew: float,
 ) -> np.ndarray:
     temperature = np.asarray(temperature, dtype=float)
-    z = (temperature - c2) / c3
-    return c1 * np.exp(-(z**2)) * (1 + erf(c4 * z / np.sqrt(2)))
+    z = (temperature - location_temperature) / sigma
+    return scale * np.exp(-(z**2)) * (1 + erf(skew * z / np.sqrt(2)))
+
+
+def skew_gauss_peak(
+    temperature: np.ndarray | float,
+    maximum: float,
+    optimum_temperature: float,
+    sigma: float,
+    skew: float,
+) -> np.ndarray:
+    """Skew-Gaussian response parameterized by its maximum and optimum."""
+
+    temperature = np.asarray(temperature, dtype=float)
+    mode_offset = _skew_gaussian_mode_offset(skew)
+    z = (temperature - optimum_temperature) / sigma + mode_offset
+    raw_response = np.exp(-(z**2)) * (1 + erf(skew * z / np.sqrt(2)))
+    mode_response = np.exp(-(mode_offset**2)) * (
+        1 + erf(skew * mode_offset / np.sqrt(2))
+    )
+    return maximum * raw_response / mode_response
 
 
 def skew_gaussinv(
     temperature: np.ndarray | float,
-    c1: float,
-    c2: float,
-    c3: float,
-    c4: float,
+    scale: float,
+    location_temperature: float,
+    sigma: float,
+    skew: float,
 ) -> np.ndarray:
     temperature = np.asarray(temperature, dtype=float)
-    z = (temperature - c2) / c3
-    return c1 * np.exp(z**2) * (1 + erf(c4 * z / np.sqrt(2)))
+    z = (temperature - location_temperature) / sigma
+    return scale * np.exp(z**2) * (1 + erf(skew * z / np.sqrt(2)))
+
+
+def _skew_gaussian_mode_offset(skew: float) -> float:
+    """Return the standardized mode of the unscaled skew-Gaussian kernel."""
+
+    if abs(skew) < 1e-12:
+        return 0.0
+    magnitude = abs(float(skew))
+
+    def log_derivative(z: float) -> float:
+        normal_density = np.exp(-0.5 * (magnitude * z) ** 2) / np.sqrt(2 * np.pi)
+        normal_cdf = 0.5 * (1 + erf(magnitude * z / np.sqrt(2)))
+        return -2 * z + magnitude * normal_density / normal_cdf
+
+    positive_mode = brentq(log_derivative, 0.0, 1.0)
+    return float(np.copysign(positive_mode, skew))
 
 
 def fit_stage_delay(data: pd.DataFrame, name: str) -> FitResult:
@@ -249,24 +307,28 @@ def fit_stage_development_rate(data: pd.DataFrame, name: str) -> FitResult:
         name=name,
         function_name="gauss",
         function=gauss,
-        p0=(float(fit_data["value"].max()), float(fit_data["temperature"].median()), 10.0),
+        p0=(
+            float(fit_data["value"].max()),
+            float(fit_data["temperature"].median()),
+            10.0,
+        ),
         bounds=([0.0, -100.0, 1e-6], [np.inf, 100.0, np.inf]),
     )
     return FitResult(
         name=name,
         function="gaussinv",
-        c1=1.0 / rate_fit.c1,
-        c2=rate_fit.c2,
-        c3=rate_fit.c3,
+        parameters=(
+            1.0 / rate_fit.parameters[0],
+            rate_fit.parameters[1],
+            rate_fit.parameters[2],
+        ),
         rss=rate_fit.rss,
         r2=rate_fit.r2,
         n=rate_fit.n,
     )
 
 
-def fit_stage_delay_q10_deactivation(
-    data: pd.DataFrame, name: str
-) -> FitResult:
+def fit_stage_delay_q10_deactivation(data: pd.DataFrame, name: str) -> FitResult:
     """Fit development rates but parameterize the response by delay at 20 C."""
 
     fit_data = data.copy()
@@ -278,22 +340,14 @@ def fit_stage_delay_q10_deactivation(
     return FitResult(
         name=name,
         function="q10_deactivation_delay",
-        c1=1.0 / rate_fit.c1,
-        c2=rate_fit.c2,
-        c3=rate_fit.c3,
-        c4=rate_fit.c4,
+        parameters=(
+            1.0 / rate_fit.parameters[0],
+            *rate_fit.parameters[1:],
+        ),
         rss=rate_fit.rss,
         r2=rate_fit.r2,
         n=rate_fit.n,
     )
-
-
-def fit_stage_development_rate_q10_deactivation(
-    data: pd.DataFrame, name: str
-) -> FitResult:
-    """Compatibility wrapper; use fit_stage_delay_q10_deactivation."""
-
-    return fit_stage_delay_q10_deactivation(data, name)
 
 
 def fit_shared_stage_delays(data: pd.DataFrame) -> dict[str, FitResult]:
@@ -320,9 +374,11 @@ def fit_shared_stage_delays(data: pd.DataFrame) -> dict[str, FitResult]:
     def delay_model(x: tuple[np.ndarray, np.ndarray], *params: float) -> np.ndarray:
         temp, stage_ids = x
         scales = np.asarray(params[: len(STAGES)], dtype=float)
-        c2 = float(params[-2])
-        c3 = float(params[-1])
-        return scales[stage_ids.astype(int)] * np.exp(((c2 - temp) / c3) ** 2)
+        minimum_temperature = float(params[-2])
+        sigma = float(params[-1])
+        return scales[stage_ids.astype(int)] * np.exp(
+            ((minimum_temperature - temp) / sigma) ** 2
+        )
 
     popt, _ = curve_fit(
         delay_model,
@@ -349,15 +405,17 @@ def fit_shared_stage_delays(data: pd.DataFrame) -> dict[str, FitResult]:
         r2_by_stage[stage] = 1.0 - rss / tss if tss > 0 else np.nan
         n_by_stage[stage] = int(mask.sum())
 
-    c2 = float(popt[-2])
-    c3 = float(popt[-1])
+    minimum_temperature = float(popt[-2])
+    sigma = float(popt[-1])
     return {
         stage: FitResult(
             name=stage,
             function="gaussinv",
-            c1=float(popt[index]),
-            c2=c2,
-            c3=c3,
+            parameters=(
+                float(popt[index]),
+                minimum_temperature,
+                sigma,
+            ),
             rss=rss_by_stage[stage],
             r2=r2_by_stage[stage],
             n=n_by_stage[stage],
@@ -387,9 +445,11 @@ def fit_shared_stage_delays_log(data: pd.DataFrame) -> dict[str, FitResult]:
     def log_delay_model(x: tuple[np.ndarray, np.ndarray], *params: float) -> np.ndarray:
         temp, stage_ids = x
         log_scales = np.asarray(params[: len(STAGES)], dtype=float)
-        c2 = float(params[-2])
-        c3 = float(params[-1])
-        return log_scales[stage_ids.astype(int)] + ((c2 - temp) / c3) ** 2
+        minimum_temperature = float(params[-2])
+        sigma = float(params[-1])
+        return log_scales[stage_ids.astype(int)] + (
+            (minimum_temperature - temp) / sigma
+        ) ** 2
 
     popt, _ = curve_fit(
         log_delay_model,
@@ -416,15 +476,17 @@ def fit_shared_stage_delays_log(data: pd.DataFrame) -> dict[str, FitResult]:
         r2_by_stage[stage] = 1.0 - rss / tss if tss > 0 else np.nan
         n_by_stage[stage] = int(mask.sum())
 
-    c2 = float(popt[-2])
-    c3 = float(popt[-1])
+    minimum_temperature = float(popt[-2])
+    sigma = float(popt[-1])
     return {
         stage: FitResult(
             name=stage,
             function="gaussinv",
-            c1=float(np.exp(popt[index])),
-            c2=c2,
-            c3=c3,
+            parameters=(
+                float(np.exp(popt[index])),
+                minimum_temperature,
+                sigma,
+            ),
             rss=rss_by_stage[stage],
             r2=r2_by_stage[stage],
             n=n_by_stage[stage],
@@ -454,9 +516,11 @@ def fit_shared_stage_development_rates(data: pd.DataFrame) -> dict[str, FitResul
     def rate_model(x: tuple[np.ndarray, np.ndarray], *params: float) -> np.ndarray:
         temp, stage_ids = x
         rate_scales = np.asarray(params[: len(STAGES)], dtype=float)
-        c2 = float(params[-2])
-        c3 = float(params[-1])
-        return rate_scales[stage_ids.astype(int)] * np.exp(-((c2 - temp) / c3) ** 2)
+        optimum_temperature = float(params[-2])
+        sigma = float(params[-1])
+        return rate_scales[stage_ids.astype(int)] * np.exp(
+            -(((optimum_temperature - temp) / sigma) ** 2)
+        )
 
     popt, _ = curve_fit(
         rate_model,
@@ -484,15 +548,13 @@ def fit_shared_stage_development_rates(data: pd.DataFrame) -> dict[str, FitResul
         r2_by_stage[stage] = 1.0 - rss / tss if tss > 0 else np.nan
         n_by_stage[stage] = int(mask.sum())
 
-    c2 = float(popt[-2])
-    c3 = float(popt[-1])
+    optimum_temperature = float(popt[-2])
+    sigma = float(popt[-1])
     return {
         stage: FitResult(
             name=stage,
             function="gaussinv",
-            c1=float(1.0 / popt[index]),
-            c2=c2,
-            c3=c3,
+            parameters=(float(1.0 / popt[index]), optimum_temperature, sigma),
             rss=rss_by_stage[stage],
             r2=r2_by_stage[stage],
             n=n_by_stage[stage],
@@ -531,7 +593,7 @@ def fit_adult_delay(data: pd.DataFrame) -> FitResult:
     peak = data.loc[data["value"].idxmax()]
     return _fit(
         data,
-        name="Adult mortality delay",
+        name="Adult duration",
         function_name="gauss",
         function=gauss,
         p0=(float(peak["value"]), float(peak["temperature"]), 10.0),
@@ -566,7 +628,7 @@ def fit_lifetime_fecundity(data: pd.DataFrame) -> FitResult:
 
 
 def fit_skew_adult_delay(data: pd.DataFrame) -> FitResult:
-    return _fit_skew_peak(data, name="Adult mortality delay")
+    return _fit_skew_peak(data, name="Adult duration")
 
 
 def fit_skew_lifetime_fecundity(data: pd.DataFrame) -> FitResult:
@@ -620,7 +682,7 @@ def maturation_delay_summary(
 
     for stage, data, column in stage_specs:
         stage_data = data[["temperature", column]].rename(columns={column: "value"})
-        stage_data = stage_data.loc[stage_data["value"] > 0]
+        stage_data = stage_data.loc[stage_data["value"] > 0].copy()
         summary = (
             stage_data.groupby("temperature", as_index=False)
             .agg(value=("value", "mean"), n=("value", "size"))
@@ -636,8 +698,7 @@ def adult_delay_summary(adult_survival: pd.DataFrame) -> pd.DataFrame:
         columns={"AF": "value"}
     )
     return (
-        female
-        .groupby("temperature", as_index=False)
+        female.groupby("temperature", as_index=False)
         .agg(value=("value", "mean"), n=("value", "size"))
         .sort_values("temperature")
     )
@@ -687,23 +748,8 @@ def stage_duration_observations(
         stage_data = data[["temperature", column]].rename(columns={column: "duration"})
         stage_data = stage_data.loc[stage_data["duration"] > 0].copy()
         stage_data["stage"] = stage
-        stage_data["inspection_interval_days"] = stage_data["temperature"].map(
-            BASER_INSPECTION_INTERVAL_DAYS
-        )
-        interval_multiplier = 3.0 if stage == "Larva" else 1.0
-        stage_data["interval_width_days"] = (
-            interval_multiplier * stage_data["inspection_interval_days"]
-        )
         rows.append(
-            stage_data[
-                [
-                    "stage",
-                    "temperature",
-                    "duration",
-                    "inspection_interval_days",
-                    "interval_width_days",
-                ]
-            ]
+            stage_data[["stage", "temperature", "duration"]]
         )
 
     adult_lifetimes = pd.concat(
@@ -719,40 +765,23 @@ def stage_duration_observations(
     )
     adult_lifetimes = adult_lifetimes.loc[adult_lifetimes["duration"] > 0].copy()
     adult_lifetimes["stage"] = "Adult"
-    adult_lifetimes["inspection_interval_days"] = adult_lifetimes[
-        "temperature"
-    ].map(BASER_INSPECTION_INTERVAL_DAYS)
-    adult_lifetimes["interval_width_days"] = adult_lifetimes[
-        "inspection_interval_days"
-    ]
     rows.append(
-        adult_lifetimes[
-            [
-                "stage",
-                "temperature",
-                "duration",
-                "inspection_interval_days",
-                "interval_width_days",
-            ]
-        ]
+        adult_lifetimes[["stage", "temperature", "duration"]]
     )
     return pd.concat(rows, ignore_index=True)
 
 
-def interval_censored_stage_counts(
+def erlang_stage_counts(
     duration_observations: pd.DataFrame,
     *,
     minimum: int = 1,
     maximum: int = 40,
     search_maximum: int = 400,
 ) -> tuple[dict[str, int], pd.DataFrame]:
-    """Choose capped Erlang-chain lengths by interval-censored likelihood.
+    """Choose capped Erlang-chain lengths from observed durations.
 
-    A recorded duration is treated as the upper endpoint of the inspection
-    interval in which a transition was observed. For a larval duration formed
-    by summing three instars, the interval width is the sum of the three
-    inspection widths. The Erlang shape is common across temperatures within a
-    stage, while its mean is profiled separately for every temperature.
+    The Erlang shape is common across temperatures within a stage, while its
+    mean is profiled separately for every temperature.
 
     The likelihood-selected integer shape is subsequently capped at `maximum`
     for numerical tractability. If the profile optimum reaches
@@ -763,16 +792,17 @@ def interval_censored_stage_counts(
         "stage",
         "temperature",
         "duration",
-        "interval_width_days",
     }
     missing = required - set(duration_observations.columns)
     if missing:
         raise ValueError(
-            "Interval-censored stage counts require columns: "
+            "Stage counts require columns: "
             + ", ".join(sorted(missing))
         )
     if minimum < 1 or maximum < minimum or search_maximum < maximum:
-        raise ValueError("Stage-count bounds must satisfy 1 <= minimum <= maximum <= search_maximum.")
+        raise ValueError(
+            "Stage-count bounds must satisfy 1 <= minimum <= maximum <= search_maximum."
+        )
 
     rows = []
     for stage, stage_data in duration_observations.groupby("stage", sort=False):
@@ -780,15 +810,8 @@ def interval_censored_stage_counts(
         for candidate in range(minimum, search_maximum + 1):
             negative_log_likelihood = 0.0
             fitted_temperature_count = 0
-            for _, temperature_data in stage_data.groupby(
-                "temperature", sort=True
-            ):
+            for _, temperature_data in stage_data.groupby("temperature", sort=True):
                 observed = temperature_data["duration"].to_numpy(dtype=float)
-                widths = temperature_data["interval_width_days"].to_numpy(
-                    dtype=float
-                )
-                lower = np.maximum(observed - widths, 0.0)
-                upper = observed
                 if len(observed) == 0:
                     continue
 
@@ -799,13 +822,10 @@ def interval_censored_stage_counts(
                 def profile_objective(log_mean: float) -> float:
                     mean = float(np.exp(log_mean))
                     scale = mean / candidate
-                    probabilities = gamma_distribution.cdf(
-                        upper, a=candidate, scale=scale
-                    ) - gamma_distribution.cdf(
-                        lower, a=candidate, scale=scale
-                    )
                     return -float(
-                        np.log(np.maximum(probabilities, 1e-300)).sum()
+                        gamma_distribution.logpdf(
+                            observed, a=candidate, scale=scale
+                        ).sum()
                     )
 
                 result = minimize_scalar(
@@ -830,11 +850,9 @@ def interval_censored_stage_counts(
             {
                 "stage": stage,
                 "stage_key": STAGE_COUNT_KEYS[stage],
-                "selection_method": "interval-censored Erlang profile likelihood",
+                "selection_method": "Erlang profile likelihood",
                 "raw_substage_count": int(raw_count),
-                "raw_substage_count_is_lower_bound": bool(
-                    raw_count == search_maximum
-                ),
+                "raw_substage_count_is_lower_bound": bool(raw_count == search_maximum),
                 "substage_count": count,
                 "substage_cap": maximum,
                 "negative_log_likelihood": best_score,
@@ -880,7 +898,9 @@ def variance_matched_stage_counts(
             mean_cv2 = np.nan
             raw_count = float(minimum)
         else:
-            temp_stats["cv2"] = temp_stats["variance"] / temp_stats["mean_duration"] ** 2
+            temp_stats["cv2"] = (
+                temp_stats["variance"] / temp_stats["mean_duration"] ** 2
+            )
             mean_cv2 = float(temp_stats["cv2"].mean())
             raw_count = 1.0 / mean_cv2 if mean_cv2 > 0 else float(minimum)
         count = max(minimum, int(np.round(raw_count)))
@@ -1151,7 +1171,9 @@ def fit_parametric_adult_reproduction_mortality_profile(
     initial_females = survival_daily["initial_females"].to_numpy(dtype=float)
     survival_adult_delay = predict(adult_fit, survival_temperatures)
 
-    def predictions(vector: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    def predictions(
+        vector: np.ndarray,
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
         reproduction_weights, mortality_weights = parametric_adult_timing_weights(
             vector,
             adult_stage_count=adult_stage_count,
@@ -1202,9 +1224,9 @@ def fit_parametric_adult_reproduction_mortality_profile(
     egg_normalized = float(np.sum(live_females * egg_residual**2)) / float(
         np.sum(live_females * observed_eggs**2)
     )
-    survival_normalized = float(np.sum(initial_females * survival_residual**2)) / float(
-        np.sum(initial_females * observed_survival**2)
-    )
+    survival_normalized = float(
+        np.sum(initial_females * survival_residual**2)
+    ) / float(np.sum(initial_females * observed_survival**2))
     output = daily.copy()
     output["fitted_eggs"] = fitted_eggs
     output["adult_delay"] = adult_delay
@@ -1306,7 +1328,9 @@ def adult_substage_occupancy(
     terms = np.exp(
         -transition_progress[..., None]
         + substages * np.log(np.maximum(transition_progress[..., None], 1e-300))
-        - np.array([np.sum(np.log(np.arange(1, int(stage) + 1))) for stage in substages])
+        - np.array(
+            [np.sum(np.log(np.arange(1, int(stage) + 1))) for stage in substages]
+        )
     )
     terms = np.where(
         (transition_progress[..., None] == 0.0) & (substages == 0.0),
@@ -1359,7 +1383,9 @@ def adult_substage_occupancy_with_mortality(
 def juvenile_mortality_summary(
     development: pd.DataFrame, adult_survival: pd.DataFrame, cohort_size: int = 50
 ) -> pd.DataFrame:
-    merged = adult_survival.merge(development, on=["temperature", "specimen"], how="inner")
+    merged = adult_survival.merge(
+        development, on=["temperature", "specimen"], how="inner"
+    )
     merged["adult"] = (merged["AF"] > 0) | (merged["AM"] > 0)
     merged["preadult_days"] = merged[["E", "L1", "L2", "L3", "P"]].sum(axis=1)
 
@@ -1391,9 +1417,13 @@ def juvenile_mortality_summary_for_stage_chain(
 ) -> pd.DataFrame:
     """Summarize juvenile mortality from total adult emergence."""
 
-    merged = adult_survival.merge(development, on=["temperature", "specimen"], how="inner")
+    merged = adult_survival.merge(
+        development, on=["temperature", "specimen"], how="inner"
+    )
     merged["adult"] = (merged["AF"] > 0) | (merged["AM"] > 0)
     merged["larva_days"] = merged[["L1", "L2", "L3"]].sum(axis=1)
+    merged["egg_days"] = merged["E"]
+    merged["pupa_days"] = merged["P"]
 
     rows = []
     for temperature, data in merged.groupby("temperature", sort=True):
@@ -1401,9 +1431,9 @@ def juvenile_mortality_summary_for_stage_chain(
         survival_probability = len(adult_data) / cohort_size
         delay_source = adult_data if not adult_data.empty else data
         mean_delays = {
-            "egg": _positive_mean(delay_source["E"]),
+            "egg": _positive_mean(delay_source["egg_days"]),
             "larva": _positive_mean(delay_source["larva_days"]),
-            "pupa": _positive_mean(delay_source["P"]),
+            "pupa": _positive_mean(delay_source["pupa_days"]),
         }
         mortality_rate = (
             juvenile_mortality_rate_for_stage_chain(
@@ -1411,7 +1441,8 @@ def juvenile_mortality_summary_for_stage_chain(
                 mean_delays,
                 stage_counts,
             )
-            if survival_probability > 0 and all(np.isfinite(value) for value in mean_delays.values())
+            if survival_probability > 0
+            and all(np.isfinite(value) for value in mean_delays.values())
             else np.nan
         )
         rows.append(
@@ -1493,36 +1524,15 @@ def predict(result: FitResult, temperature: np.ndarray | float) -> np.ndarray:
     functions = {
         "gauss": gauss,
         "gaussinv": gaussinv,
-        "gaussinvgentle": gaussinvgentle,
-        "q10_deactivation_rate": q10_deactivation_rate,
+        "q10_deactivation_response": q10_deactivation_response,
         "q10_deactivation_inv": q10_deactivation_inv,
         "q10_deactivation_delay": q10_deactivation_delay,
         "double_logistic_mortality": double_logistic_mortality,
         "skew_gauss": skew_gauss,
+        "skew_gauss_peak": skew_gauss_peak,
         "skew_gaussinv": skew_gaussinv,
     }
-    if result.function == "double_logistic_mortality":
-        return functions[result.function](
-            temperature,
-            result.c1,
-            result.c2,
-            result.c3,
-            result.c4,
-            result.c5,
-            result.c6,
-            result.c7,
-        )
-    if result.function in {
-        "skew_gauss",
-        "skew_gaussinv",
-        "q10_deactivation_rate",
-        "q10_deactivation_inv",
-        "q10_deactivation_delay",
-    }:
-        return functions[result.function](
-            temperature, result.c1, result.c2, result.c3, result.c4
-        )
-    return functions[result.function](temperature, result.c1, result.c2, result.c3)
+    return functions[result.function](temperature, *result.parameters)
 
 
 def _fit_shared_stage_development_rates(
@@ -1584,10 +1594,7 @@ def _fit_shared_stage_development_rates(
         stage: FitResult(
             name=stage,
             function=function_name,
-            c1=float(popt[index]),
-            c2=shared[0],
-            c3=shared[1],
-            c4=shared[2] if len(shared) > 2 else np.nan,
+            parameters=(float(popt[index]), *shared),
             rss=rss_by_stage[stage],
             r2=r2_by_stage[stage],
             n=n_by_stage[stage],
@@ -1616,13 +1623,7 @@ def _fit(
     return FitResult(
         name=name,
         function=function_name,
-        c1=float(params[0]),
-        c2=float(params[1]),
-        c3=float(params[2]),
-        c4=float(params[3]) if len(params) > 3 else np.nan,
-        c5=float(params[4]) if len(params) > 4 else np.nan,
-        c6=float(params[5]) if len(params) > 5 else np.nan,
-        c7=float(params[6]) if len(params) > 6 else np.nan,
+        parameters=tuple(float(value) for value in params),
         rss=rss,
         r2=r2,
         n=len(fit_data),
@@ -1671,7 +1672,7 @@ def fit_q10_deactivation_response(
                 start = np.minimum(start, upper - 1e-10)
                 try:
                     parameters, _ = curve_fit(
-                        q10_deactivation_rate,
+                        q10_deactivation_response,
                         temperature,
                         observed,
                         p0=start,
@@ -1680,7 +1681,7 @@ def fit_q10_deactivation_response(
                     )
                 except (RuntimeError, ValueError, FloatingPointError):
                     continue
-                prediction = q10_deactivation_rate(temperature, *parameters)
+                prediction = q10_deactivation_response(temperature, *parameters)
                 rss = float(np.sum((observed - prediction) ** 2))
                 if np.isfinite(rss) and rss < best_rss:
                     best_rss = rss
@@ -1693,11 +1694,8 @@ def fit_q10_deactivation_response(
     tss = float(np.sum((observed - observed.mean()) ** 2))
     return FitResult(
         name=name,
-        function="q10_deactivation_rate",
-        c1=float(best_parameters[0]),
-        c2=float(best_parameters[1]),
-        c3=float(best_parameters[2]),
-        c4=float(best_parameters[3]),
+        function="q10_deactivation_response",
+        parameters=tuple(float(value) for value in best_parameters),
         rss=best_rss,
         r2=1.0 - best_rss / tss if tss > 0 else np.nan,
         n=len(fit_data),
@@ -1748,7 +1746,9 @@ def _fit_juvenile_mortality_to_survival(
         )
 
         def objective(params: np.ndarray) -> float:
-            predicted = np.clip(survival_model(temperatures, *params), 1e-12, 1.0 - 1e-12)
+            predicted = np.clip(
+                survival_model(temperatures, *params), 1e-12, 1.0 - 1e-12
+            )
             return float(
                 -np.sum(
                     successes * np.log(predicted)
@@ -1780,13 +1780,7 @@ def _fit_juvenile_mortality_to_survival(
     return FitResult(
         name="Juvenile mortality rate",
         function=function_name,
-        c1=float(params[0]),
-        c2=float(params[1]),
-        c3=float(params[2]),
-        c4=float(params[3]) if len(params) > 3 else np.nan,
-        c5=float(params[4]) if len(params) > 4 else np.nan,
-        c6=float(params[5]) if len(params) > 5 else np.nan,
-        c7=float(params[6]) if len(params) > 6 else np.nan,
+        parameters=tuple(float(value) for value in params),
         rss=rss,
         r2=r2,
         n=len(fit_data),
@@ -1803,14 +1797,14 @@ def juvenile_survival_from_mortality_response(
 ) -> np.ndarray:
     temperatures = np.asarray(temperature, dtype=float)
     survival = np.ones_like(temperatures, dtype=float)
-    mortality = np.asarray(mortality_function(temperatures, *mortality_params), dtype=float)
+    mortality = np.asarray(
+        mortality_function(temperatures, *mortality_params), dtype=float
+    )
     for stage in STAGES:
         stage_key = STAGE_COUNT_KEYS[stage]
         count = int(stage_counts[stage_key])
         stage_delay = np.asarray(predict(stage_fits[stage], temperatures), dtype=float)
-        stage_rate = competing_risk_transition_rate(
-            count, stage_delay, mortality
-        )
+        stage_rate = competing_risk_transition_rate(count, stage_delay, mortality)
         survival *= (stage_rate / (stage_rate + mortality)) ** count
     return survival
 
@@ -1820,8 +1814,8 @@ def _fit_skew_peak(data: pd.DataFrame, *, name: str) -> FitResult:
     return _fit(
         data,
         name=name,
-        function_name="skew_gauss",
-        function=skew_gauss,
+        function_name="skew_gauss_peak",
+        function=skew_gauss_peak,
         p0=(float(peak["value"]), float(peak["temperature"]), 10.0, 0.0),
         bounds=([0.0, -100.0, 1e-6, -20.0], [np.inf, 100.0, np.inf, 20.0]),
     )

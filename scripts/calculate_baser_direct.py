@@ -76,7 +76,7 @@ def parse_args() -> argparse.Namespace:
         ),
     )
     parser.add_argument(
-        "--offspring-sex-ratio",
+        "--offspring-female-fraction",
         type=float,
         default=None,
         help=(
@@ -125,22 +125,22 @@ def main() -> None:
             args.processed_dir,
             rebuild=args.rebuild_processed,
         )
-    offspring_sex_ratio = (
+    offspring_female_fraction = (
         pooled_adult_female_fraction(adult_survival)
-        if args.offspring_sex_ratio is None
-        else args.offspring_sex_ratio
+        if args.offspring_female_fraction is None
+        else args.offspring_female_fraction
     )
     female_preadult = female_preadult_distribution(development, adult_survival)
     schedule = build_reproduction_schedule(
         fertility,
         female_preadult,
-        offspring_sex_ratio=offspring_sex_ratio,
+        offspring_female_fraction=offspring_female_fraction,
     )
     rates = summarize_rates(schedule)
     mean_shift_schedule = build_reproduction_schedule(
         fertility,
         female_preadult_summary(development, adult_survival),
-        offspring_sex_ratio=offspring_sex_ratio,
+        offspring_female_fraction=offspring_female_fraction,
     )
     mean_shift_rates = summarize_rates(mean_shift_schedule)
     sensitivity = rates.merge(
@@ -161,7 +161,7 @@ def main() -> None:
             fertility,
             samples=args.bootstrap_samples,
             seed=args.bootstrap_seed,
-            offspring_sex_ratio=offspring_sex_ratio,
+            offspring_female_fraction=offspring_female_fraction,
         )
         rates = rates.merge(bootstrap, on="temperature", how="left")
 
@@ -184,7 +184,7 @@ def main() -> None:
         output=args.plot_dir / "baser_direct_r_by_temperature.png",
     )
 
-    print(f"Pooled BASER adult female fraction: {offspring_sex_ratio:.6g}")
+    print(f"Pooled BASER adult female fraction: {offspring_female_fraction:.6g}")
     print(rates.to_string(index=False, float_format=lambda value: f"{value:.6g}"))
     print(f"\nWrote {args.output}")
     print(f"Wrote {args.schedule_output}")
@@ -200,7 +200,7 @@ def bootstrap_direct_rate_errors(
     *,
     samples: int,
     seed: int,
-    offspring_sex_ratio: float,
+    offspring_female_fraction: float,
 ) -> pd.DataFrame:
     """Estimate direct demographic-rate uncertainty by resampling specimens.
 
@@ -246,7 +246,7 @@ def bootstrap_direct_rate_errors(
             schedule = build_reproduction_schedule(
                 sampled_fertility,
                 preadult,
-                offspring_sex_ratio=offspring_sex_ratio,
+                offspring_female_fraction=offspring_female_fraction,
             )
             if schedule.empty:
                 continue

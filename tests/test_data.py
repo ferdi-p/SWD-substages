@@ -62,7 +62,7 @@ def test_female_preadult_summary_conditions_survival_on_initial_female():
     assert summary["female_adults"] == 1
     assert summary["adult_count"] == 3
     assert summary["p_survive_to_adult"] == 0.3
-    assert summary["mean_female_preadult_days"] == 5.0
+    assert summary["mean_female_preadult_days"] == pytest.approx(5.0)
 
 
 def test_female_preadult_distribution_retains_individual_timings():
@@ -86,10 +86,10 @@ def test_female_preadult_distribution_retains_individual_timings():
         }
     )
 
-    distribution = female_preadult_distribution(
-        development, adults, cohort_size=10
-    )
+    distribution = female_preadult_distribution(development, adults, cohort_size=10)
 
-    assert distribution["preadult_days"].tolist() == [5.0, 7.0]
+    assert distribution["preadult_days"].tolist() == pytest.approx(
+        [5.0, 7.0]
+    )
     assert distribution["preadult_weight"].tolist() == [0.5, 0.5]
     assert distribution["p_survive_to_adult"].tolist() == [0.3, 0.3]

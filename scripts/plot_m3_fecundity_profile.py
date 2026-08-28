@@ -41,23 +41,13 @@ def main() -> None:
     profile_path = (
         OUTPUT_DIR / "model_complexity" / "adult_exit_chain_fecundity_profile.csv"
     )
-    legacy_weights_path = (
-        OUTPUT_DIR / "model_complexity" / "adult_exit_chain_fecundity_weights.csv"
-    )
-    profile = pd.read_csv(
-        profile_path if profile_path.exists() else legacy_weights_path
-    )
-    profile_column = (
-        "fecundity_profile"
-        if "fecundity_profile" in profile.columns
-        else "reproduction_weight"
-    )
+    profile = pd.read_csv(profile_path)
 
     fig, ax = plt.subplots(figsize=(3.4, 2.65))
     fig.subplots_adjust(left=0.18, right=0.98, bottom=0.26, top=0.96)
     ax.plot(
         profile["adult_substage"],
-        profile[profile_column],
+        profile["fecundity_profile"],
         color=M3_COLOR,
         linewidth=2.4,
         marker="o",

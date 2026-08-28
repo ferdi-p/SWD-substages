@@ -31,6 +31,7 @@ from r_r0_pop.data import (
 )
 from r_r0_pop.demography import build_reproduction_schedule, summarize_rates
 from r_r0_pop.life_history_fits import (
+    FUNCTION_PARAMETER_NAMES,
     FitResult,
     STAGE_COUNT_KEYS,
     STAGES,
@@ -45,7 +46,7 @@ from r_r0_pop.life_history_fits import (
     fit_juvenile_mortality,
     fit_skew_lifetime_fecundity,
     juvenile_mortality_summary_for_stage_chain,
-    interval_censored_stage_counts,
+    erlang_stage_counts,
     lifetime_fecundity_summary,
     maturation_delay_summary,
     stage_duration_observations,
@@ -139,7 +140,7 @@ def parse_args() -> argparse.Namespace:
         "--max-substages",
         type=int,
         default=40,
-        help="Upper bound for interval-censored, variance-informed substage counts.",
+        help="Upper bound for variance-informed substage counts.",
     )
     parser.add_argument(
         "--reuse-fits",
@@ -159,7 +160,7 @@ def main() -> None:
     args.output_dir.mkdir(parents=True, exist_ok=True)
     args.plot_dir.mkdir(parents=True, exist_ok=True)
 
-    count_path = args.output_dir / "variance_matched_substage_counts.csv"
+    count_path = args.output_dir / "stage_substage_counts.csv"
     durations = stage_duration_observations(development, adult_survival, fertility)
     if args.reuse_fits:
         count_table = pd.read_csv(count_path)
@@ -168,7 +169,7 @@ def main() -> None:
             for row in count_table.itertuples(index=False)
         }
     else:
-        substage_counts, count_table = interval_censored_stage_counts(
+        substage_counts, count_table = erlang_stage_counts(
             durations, maximum=args.max_substages
         )
         count_table.to_csv(count_path, index=False)
@@ -192,9 +193,8 @@ def main() -> None:
     juvenile_survival_parameters_path = (
         args.output_dir / "juvenile_survival_fit_parameters.csv"
     )
-    exit_fecundity_profile_path = args.output_dir / "adult_exit_chain_fecundity_profile.csv"
-    legacy_exit_fecundity_weights_path = (
-        args.output_dir / "adult_exit_chain_fecundity_weights.csv"
+    exit_fecundity_profile_path = (
+        args.output_dir / "adult_exit_chain_fecundity_profile.csv"
     )
     exit_fecundity_predictions_path = (
         args.output_dir / "adult_exit_chain_fecundity_predictions.csv"
@@ -206,9 +206,7 @@ def main() -> None:
 
     if args.reuse_fits:
         parameter_table = pd.read_csv(parameter_path)
-        juvenile_survival_parameters = pd.read_csv(
-            juvenile_survival_parameters_path
-        )
+        juvenile_survival_parameters = pd.read_csv(juvenile_survival_parameters_path)
     else:
         parameter_table = fit_base_parameter_table(summaries)
         single_counts = {key: 1 for key in substage_counts}
@@ -234,40 +232,18 @@ def main() -> None:
     base_fitted_parameter_count = fitted_coefficient_count(parameter_table)
 
     if args.reuse_fits:
-        if exit_fecundity_profile_path.exists():
-            exit_fecundity_profile = pd.read_csv(exit_fecundity_profile_path)
-        else:
-            exit_fecundity_profile = pd.read_csv(legacy_exit_fecundity_weights_path)
-        exit_fecundity_parameters = pd.read_csv(
-            exit_fecundity_parameters_path
-        )
-        profile_column = (
-            "fecundity_profile"
-            if "fecundity_profile" in exit_fecundity_profile.columns
-            else "reproduction_weight"
-        )
+        exit_fecundity_profile = pd.read_csv(exit_fecundity_profile_path)
+        exit_fecundity_parameters = pd.read_csv(exit_fecundity_parameters_path)
         exit_fecundity_profile_values = exit_fecundity_profile[
-            profile_column
+            "fecundity_profile"
         ].to_numpy(dtype=float)
-        exit_parameter_index = exit_fecundity_parameters.set_index("name")
-        if {
-            "Adult fecundity profile center",
-            "Adult fecundity profile width",
-        }.issubset(exit_parameter_index.index):
-            center = float(
-                exit_parameter_index.loc["Adult fecundity profile center", "c1"]
-            )
-            width = float(
-                exit_parameter_index.loc["Adult fecundity profile width", "c1"]
-            )
-            exit_fecundity_profile_values = gaussian_adult_fecundity_profile(
-                center,
-                width,
-                adult_stage_count=substage_counts["adult"],
-            )
-        exit_fecundity_profile_values /= float(
-            np.mean(exit_fecundity_profile_values)
+        profile_parameters = exit_fecundity_parameters.iloc[0]
+        exit_fecundity_profile_values = gaussian_adult_fecundity_profile(
+            peak_location=float(profile_parameters["peak_location"]),
+            sigma=float(profile_parameters["sigma"]),
+            adult_stage_count=substage_counts["adult"],
         )
+        exit_fecundity_profile_values /= float(np.mean(exit_fecundity_profile_values))
     else:
         exit_fecundity_fit = fit_exit_chain_fecundity_profile(
             summaries["adult_time"],
@@ -326,13 +302,13 @@ def main() -> None:
             exit_fecundity_parameters
         ),
     )
-    offspring_sex_ratio = pooled_adult_female_fraction(adult_survival)
+    offspring_female_fraction = pooled_adult_female_fraction(adult_survival)
     models = tuple(
         replace(
             model,
             parameters=replace(
                 model.parameters,
-                female_fraction=offspring_sex_ratio,
+                female_fraction=offspring_female_fraction,
             ),
         )
         for model in models
@@ -346,7 +322,7 @@ def main() -> None:
     reproduction_schedule = build_reproduction_schedule(
         fertility,
         female_preadult,
-        offspring_sex_ratio=offspring_sex_ratio,
+        offspring_female_fraction=offspring_female_fraction,
     )
     direct_rates = summarize_rates(reproduction_schedule)
     direct_rates.to_csv(direct_rates_path, index=False)
@@ -387,7 +363,7 @@ def main() -> None:
     r_plot = args.plot_dir / "main_model_complexity_r.png"
     R0_plot = args.plot_dir / "main_model_complexity_R0.png"
     generation_time_plot = args.plot_dir / "main_model_complexity_generation_time.png"
-    counts_plot = args.plot_dir / "variance_matched_substage_counts.png"
+    counts_plot = args.plot_dir / "stage_substage_counts.png"
 
     plot_demographic_models(
         curves,
@@ -425,7 +401,9 @@ def main() -> None:
         publication_figure_dir=args.publication_figure_dir,
         supplementary_figure_dir=args.supplementary_figure_dir,
     )
-    shared_figures["seasonal_simulation"] = args.plot_dir / "seasonal_simulation_composite.png"
+    shared_figures["seasonal_simulation"] = (
+        args.plot_dir / "seasonal_simulation_composite.png"
+    )
     plot_seasonal_simulation_composite(
         main_models,
         output=shared_figures["seasonal_simulation"],
@@ -480,7 +458,7 @@ def fit_base_parameter_table(
         fit_juvenile_mortality(summaries["juvenile"]),
         fit_q10_deactivation_response(
             summaries["adult"],
-            name="Adult mortality delay",
+            name="Adult duration",
         ),
         fit_skew_lifetime_fecundity(summaries["fecundity"]),
     ]
@@ -537,7 +515,9 @@ def juvenile_stage_survival_observations(
     *,
     cohort_size: int = 50,
 ) -> pd.DataFrame:
-    merged = adult_survival.merge(development, on=["temperature", "specimen"], how="inner")
+    merged = adult_survival.merge(
+        development, on=["temperature", "specimen"], how="inner"
+    )
     merged["death_larva"] = (
         (merged["death_L1"] > 0) | (merged["death_L2"] > 0) | (merged["death_L3"] > 0)
     )
@@ -567,9 +547,7 @@ def juvenile_stage_survival_observations(
                     "entered": stage_entered,
                     "survived": survived[stage],
                     "survival_probability": (
-                        survived[stage] / stage_entered
-                        if stage_entered > 0
-                        else np.nan
+                        survived[stage] / stage_entered if stage_entered > 0 else np.nan
                     ),
                 }
             )
@@ -580,24 +558,19 @@ def parameter_table_with_juvenile_fit(
     parameter_table: pd.DataFrame, juvenile_fit: pd.Series
 ) -> pd.DataFrame:
     updated = parameter_table.copy()
-    for column in (
-        "function",
-        "c1",
-        "c2",
-        "c3",
-        "c4",
-        "c5",
-        "c6",
-        "c7",
-        "rss",
-        "r2",
-        "n",
-    ):
+    functions = set(updated["function"].dropna()) | {juvenile_fit["function"]}
+    response_columns = {
+        column
+        for function in functions
+        for columns in (FUNCTION_PARAMETER_NAMES[function],)
+        for column in columns
+    }
+    for column in ("function", *sorted(response_columns), "rss", "r2", "n"):
         if column not in updated.columns:
             updated[column] = np.nan
-        updated.loc[updated["name"] == "Juvenile mortality rate", column] = juvenile_fit[
-            column
-        ]
+        updated.loc[updated["name"] == "Juvenile mortality rate", column] = (
+            juvenile_fit.get(column, np.nan)
+        )
     return updated
 
 
@@ -630,8 +603,8 @@ def fit_exit_chain_fecundity_profile(
 
     def profile_from_vector(vector: np.ndarray) -> np.ndarray:
         raw_profile = gaussian_adult_fecundity_profile(
-            center=float(vector[0]),
-            width=float(np.exp(vector[1])),
+            peak_location=float(vector[0]),
+            sigma=float(np.exp(vector[1])),
             adult_stage_count=adult_stage_count,
         )
         return raw_profile / float(np.mean(raw_profile))
@@ -644,9 +617,10 @@ def fit_exit_chain_fecundity_profile(
             daily_adult_delay,
             adult_stage_count=adult_stage_count,
         )
-        base_daily = np.asarray(
-            lifetime_fecundity_response(daily_temperatures), dtype=float
-        ) / daily_adult_delay
+        base_daily = (
+            np.asarray(lifetime_fecundity_response(daily_temperatures), dtype=float)
+            / daily_adult_delay
+        )
         return base_daily * occupancy.dot(profile)
 
     def objective(vector: np.ndarray) -> float:
@@ -671,11 +645,11 @@ def fit_exit_chain_fecundity_profile(
     if not result.success and not np.isfinite(result.fun):
         raise RuntimeError(f"Adult exit-chain fecundity fit failed: {result.message}")
 
-    profile_center = float(result.x[0])
-    profile_width = float(np.exp(result.x[1]))
+    peak_location = float(result.x[0])
+    sigma = float(np.exp(result.x[1]))
     raw_profile = gaussian_adult_fecundity_profile(
-        center=profile_center,
-        width=profile_width,
+        peak_location=peak_location,
+        sigma=sigma,
         adult_stage_count=adult_stage_count,
     )
     profile = raw_profile / float(np.mean(raw_profile))
@@ -686,9 +660,7 @@ def fit_exit_chain_fecundity_profile(
         adult_stage_count=adult_stage_count,
     )
     fitted_daily = (
-        np.asarray(
-            lifetime_fecundity_response(daily_temperatures), dtype=float
-        )
+        np.asarray(lifetime_fecundity_response(daily_temperatures), dtype=float)
         / daily_adult_delay
         * daily_occupancy.dot(profile)
     )
@@ -724,27 +696,14 @@ def fit_exit_chain_fecundity_profile(
     parameter_frame = pd.DataFrame(
         [
             {
-                "name": "Adult fecundity profile center",
+                "name": "Adult fecundity profile",
                 "function": "normalized_gaussian_adult_fecundity_profile",
-                "c1": profile_center,
-                "c2": np.nan,
-                "c3": np.nan,
-                "c4": np.nan,
+                "peak_location": peak_location,
+                "sigma": sigma,
                 "objective": canonical_objective,
                 "optimizer_success": bool(result.success),
                 "optimizer_message": str(result.message),
-            },
-            {
-                "name": "Adult fecundity profile width",
-                "function": "normalized_gaussian_adult_fecundity_profile",
-                "c1": profile_width,
-                "c2": np.nan,
-                "c3": np.nan,
-                "c4": np.nan,
-                "objective": canonical_objective,
-                "optimizer_success": bool(result.success),
-                "optimizer_message": str(result.message),
-            },
+            }
         ]
     )
     return {
@@ -756,13 +715,13 @@ def fit_exit_chain_fecundity_profile(
 
 
 def gaussian_adult_fecundity_profile(
-    center: float,
-    width: float,
+    peak_location: float,
+    sigma: float,
     *,
     adult_stage_count: int,
 ) -> np.ndarray:
     x = (np.arange(adult_stage_count, dtype=float) + 0.5) / adult_stage_count
-    return np.exp(-0.5 * ((x - center) / width) ** 2)
+    return np.exp(-0.5 * ((x - peak_location) / sigma) ** 2)
 
 
 def build_model_specs(
@@ -803,12 +762,10 @@ def build_model_specs(
                 base_parameters,
                 daily_fecundity_response=None,
                 adult_fecundity_profile=exit_fecundity_profile,
-                adult_fecundity_weights=None,
                 adult_mortality_weights=None,
             ),
             fitted_parameter_count=(
-                base_fitted_parameter_count
-                + adult_timing_fitted_parameter_count
+                base_fitted_parameter_count + adult_timing_fitted_parameter_count
             ),
         ),
     )
@@ -817,12 +774,13 @@ def build_model_specs(
 def fitted_coefficient_count(parameter_table: pd.DataFrame) -> int:
     """Count nonmissing fitted response coefficients in a parameter table."""
 
-    coefficient_columns = [
-        column
-        for column in ("c1", "c2", "c3", "c4", "c5", "c6", "c7")
-        if column in parameter_table
-    ]
-    return int(parameter_table[coefficient_columns].notna().sum().sum())
+    return sum(
+        sum(
+            pd.notna(getattr(row, column))
+            for column in FUNCTION_PARAMETER_NAMES[row.function]
+        )
+        for row in parameter_table.itertuples(index=False)
+    )
 
 
 def summarize_model(
@@ -833,9 +791,7 @@ def summarize_model(
     direct_r = direct_rates["r_euler"].to_numpy(dtype=float)
     direct_R0 = direct_rates["R0"].to_numpy(dtype=float)
     model_generation_time = rates["generation_time_model"].to_numpy(dtype=float)
-    direct_generation_time = direct_rates["generation_time_euler"].to_numpy(
-        dtype=float
-    )
+    direct_generation_time = direct_rates["generation_time_euler"].to_numpy(dtype=float)
     return {
         "model": model.key,
         "label": model.label,
@@ -942,6 +898,8 @@ MAIN_TEXT_ADULT_REPRODUCTION_TEMPERATURES = (13.0, 25.0, 29.0)
 STAGE_DURATION_LEGEND_HANDLE_LENGTH = (
     STAGE_DURATION_LEGEND_HANDLE_POINTS / STAGE_DURATION_LEGEND_FONTSIZE
 )
+
+
 class RightAlignedMarkerHandler(HandlerBase):
     def create_artists(
         self,
@@ -1177,7 +1135,9 @@ def hide_inner_tick_labels(
     hide_y: bool = True,
 ) -> None:
     for row in range(axes.shape[0]):
-        visible_cols = [col for col in range(axes.shape[1]) if axes[row, col].get_visible()]
+        visible_cols = [
+            col for col in range(axes.shape[1]) if axes[row, col].get_visible()
+        ]
         last_visible_col = visible_cols[-1] if visible_cols else None
         for col in range(axes.shape[1]):
             ax = axes[row, col]
@@ -1297,12 +1257,20 @@ def plot_adult_reproduction_timing(
     columns = 3
     rows = int(np.ceil(len(temperatures) / columns))
     fig, axes = plt.subplots(
-        rows, columns, figsize=(12.0, 2.85 * rows), constrained_layout=True, squeeze=False
+        rows,
+        columns,
+        figsize=(12.0, 2.85 * rows),
+        constrained_layout=True,
+        squeeze=False,
     )
     for ax, temperature in zip(axes.flat, temperatures):
-        temp_data = daily.loc[daily["temperature"] == temperature].sort_values("adult_day")
+        temp_data = daily.loc[daily["temperature"] == temperature].sort_values(
+            "adult_day"
+        )
         adult_days = temp_data["adult_day"].to_numpy(dtype=float)
-        adult_delay = np.repeat(float(parameters.adult_delay(float(temperature))), len(adult_days))
+        adult_delay = np.repeat(
+            float(parameters.adult_delay(float(temperature))), len(adult_days)
+        )
         occupancy = adult_substage_occupancy(
             adult_days,
             adult_delay,
@@ -1336,10 +1304,16 @@ def plot_adult_survival_timing(predictions: pd.DataFrame, *, output: Path) -> No
     columns = 3
     rows = int(np.ceil(len(temperatures) / columns))
     fig, axes = plt.subplots(
-        rows, columns, figsize=(12.0, 2.85 * rows), constrained_layout=True, squeeze=False
+        rows,
+        columns,
+        figsize=(12.0, 2.85 * rows),
+        constrained_layout=True,
+        squeeze=False,
     )
     for panel_index, (ax, temperature) in enumerate(zip(axes.flat, temperatures)):
-        temp_data = data.loc[data["temperature"] == temperature].sort_values("adult_day")
+        temp_data = data.loc[data["temperature"] == temperature].sort_values(
+            "adult_day"
+        )
         ax.scatter(
             temp_data["adult_day"],
             temp_data["survival_fraction"],
@@ -1376,13 +1350,17 @@ def plot_reproduction_kernel_panel(
     columns = 3
     rows = int(np.ceil(len(temperatures) / columns))
     fig, axes = plt.subplots(
-        rows, columns, figsize=(12.0, 2.95 * rows), constrained_layout=True, squeeze=False
+        rows,
+        columns,
+        figsize=(12.0, 2.95 * rows),
+        constrained_layout=True,
+        squeeze=False,
     )
     color = model_style(model.key)[0]
     for ax, temperature in zip(axes.flat, temperatures):
-        temp_schedule = schedule.loc[schedule["temperature"] == temperature].sort_values(
-            "age_days"
-        )
+        temp_schedule = schedule.loc[
+            schedule["temperature"] == temperature
+        ].sort_values("age_days")
         if temp_schedule.empty:
             ax.set_visible(False)
             continue
@@ -1452,7 +1430,9 @@ def write_shared_model_figures(
         output=paths["manuscript_stage_durations"],
         figsize=manuscript_figsize(2, 2),
     )
-    plot_delay_distributions(durations, main_models, output=paths["delay_distributions"])
+    plot_delay_distributions(
+        durations, main_models, output=paths["delay_distributions"]
+    )
     plot_delay_distributions(
         durations,
         main_models,
@@ -1474,7 +1454,9 @@ def write_shared_model_figures(
         share_x_by_stage=True,
         stage_subset=("Egg", "Larva"),
     )
-    plot_maturation_survival(durations, main_models, output=paths["maturation_survival"])
+    plot_maturation_survival(
+        durations, main_models, output=paths["maturation_survival"]
+    )
     plot_maturation_survival(
         durations,
         main_models,
@@ -1529,11 +1511,17 @@ def write_model_figures(
     }
     plot_juvenile_panel(summaries["juvenile"], model, output=paths["juvenile"])
     if shows_single_daily_fecundity(model):
-        plot_daily_fecundity_panel(summaries["daily"], model, output=paths["daily_fecundity"])
+        plot_daily_fecundity_panel(
+            summaries["daily"], model, output=paths["daily_fecundity"]
+        )
     else:
         paths.pop("daily_fecundity")
-    plot_lifetime_fecundity_panel(summaries["fecundity"], model, output=paths["lifetime_fecundity"])
-    plot_adult_fecundity_time_panel(summaries["adult_time"], model, output=paths["adult_fecundity_time"])
+    plot_lifetime_fecundity_panel(
+        summaries["fecundity"], model, output=paths["lifetime_fecundity"]
+    )
+    plot_adult_fecundity_time_panel(
+        summaries["adult_time"], model, output=paths["adult_fecundity_time"]
+    )
     if has_adult_timing_profile(model):
         plot_adult_timing_profile_panel(model, output=paths["adult_timing_profile"])
     else:
@@ -1625,8 +1613,6 @@ def has_adult_timing_profile(model: ModelSpec) -> bool:
 def adult_fecundity_profile_values(model: ModelSpec) -> np.ndarray | None:
     profile = model.parameters.adult_fecundity_profile
     if profile is None:
-        profile = model.parameters.adult_fecundity_weights
-    if profile is None:
         return None
     return np.asarray(profile, dtype=float)
 
@@ -1696,7 +1682,9 @@ def juvenile_stage_survival_probability(
     return (stage_rate / (stage_rate + mortality)) ** stage_count
 
 
-def model_mean_daily_fecundity(model: ModelSpec, temperatures: np.ndarray) -> np.ndarray:
+def model_mean_daily_fecundity(
+    model: ModelSpec, temperatures: np.ndarray
+) -> np.ndarray:
     daily = np.asarray(model.parameters.daily_fecundity(temperatures), dtype=float)
     profile = adult_fecundity_profile_values(model)
     if profile is None:
@@ -1855,11 +1843,11 @@ def plot_fecundity_temperature_comparison(
         for model in models:
             plot_model_curve(
                 ax,
-                    x_grid,
-                    np.asarray(response(model, x_grid), dtype=float),
-                    model,
-                    linewidth_scale=MANUSCRIPT_CURVE_LINEWIDTH_SCALE,
-                )
+                x_grid,
+                np.asarray(response(model, x_grid), dtype=float),
+                model,
+                linewidth_scale=MANUSCRIPT_CURVE_LINEWIDTH_SCALE,
+            )
         ax.set_title(title)
         ax.set_xlabel("Temperature (°C)")
         ax.set_ylabel(ylabel)
@@ -1897,7 +1885,9 @@ def plot_adult_reproduction_time_comparison(
         squeeze=False,
     )
     for panel_index, (ax, temperature) in enumerate(zip(axes.flat, temperatures)):
-        temp_data = data.loc[data["temperature"] == temperature].sort_values("adult_day")
+        temp_data = data.loc[data["temperature"] == temperature].sort_values(
+            "adult_day"
+        )
         adult_days = temp_data["adult_day"].to_numpy(dtype=float)
         in_range = temp_data["value"] <= y_limit[1]
         in_range_data = temp_data.loc[in_range]
@@ -2069,9 +2059,24 @@ def plot_stage_duration_panel(
 ) -> None:
     fig, axes = plt.subplots(2, 2, figsize=figsize, constrained_layout=True)
     panels = [
-        ("Egg", summaries["stage"].loc[summaries["stage"]["stage"] == "Egg"], "egg_delay", "days"),
-        ("Larva", summaries["stage"].loc[summaries["stage"]["stage"] == "Larva"], "larva_delay", "days"),
-        ("Pupa", summaries["stage"].loc[summaries["stage"]["stage"] == "Pupa"], "pupa_delay", "days"),
+        (
+            "Egg",
+            summaries["stage"].loc[summaries["stage"]["stage"] == "Egg"],
+            "egg_delay",
+            "days",
+        ),
+        (
+            "Larva",
+            summaries["stage"].loc[summaries["stage"]["stage"] == "Larva"],
+            "larva_delay",
+            "days",
+        ),
+        (
+            "Pupa",
+            summaries["stage"].loc[summaries["stage"]["stage"] == "Pupa"],
+            "pupa_delay",
+            "days",
+        ),
         ("Adult", summaries["adult"], "adult_delay", "days"),
     ]
     all_temperatures = np.concatenate(
@@ -2161,7 +2166,9 @@ def stage_duration_x_max_by_stage(
         if stage_values.empty:
             x_max_by_stage[stage] = 2.0
             continue
-        x_max_by_stage[stage] = max(float(np.ceil(stage_values.max() * multiplier)), 2.0)
+        x_max_by_stage[stage] = max(
+            float(np.ceil(stage_values.max() * multiplier)), 2.0
+        )
     return x_max_by_stage
 
 
@@ -2198,7 +2205,9 @@ def plot_delay_distributions(
     )
     for stage_index, stage in enumerate(stages):
         for temp_index, temperature in enumerate(temperatures):
-            row, col = (temp_index, stage_index) if transpose else (stage_index, temp_index)
+            row, col = (
+                (temp_index, stage_index) if transpose else (stage_index, temp_index)
+            )
             ax = axes[row, col]
             stage_data = durations.loc[
                 (durations["stage"] == stage)
@@ -2232,7 +2241,8 @@ def plot_delay_distributions(
                     marker=style["marker"],
                     markersize=4.5,
                     markevery=15,
-                    linewidth=float(style["linewidth"]) * MANUSCRIPT_CURVE_LINEWIDTH_SCALE,
+                    linewidth=float(style["linewidth"])
+                    * MANUSCRIPT_CURVE_LINEWIDTH_SCALE,
                     solid_capstyle="butt",
                     dash_capstyle=style["dash_capstyle"],
                     label=manuscript_model_label(model),
@@ -2291,7 +2301,9 @@ def plot_maturation_survival(
     )
     for stage_index, stage in enumerate(stages):
         for temp_index, temperature in enumerate(temperatures):
-            row, col = (temp_index, stage_index) if transpose else (stage_index, temp_index)
+            row, col = (
+                (temp_index, stage_index) if transpose else (stage_index, temp_index)
+            )
             ax = axes[row, col]
             stage_data = durations.loc[
                 (durations["stage"] == stage)
@@ -2332,7 +2344,8 @@ def plot_maturation_survival(
                     marker=style["marker"],
                     markersize=4.5,
                     markevery=15,
-                    linewidth=float(style["linewidth"]) * MANUSCRIPT_CURVE_LINEWIDTH_SCALE,
+                    linewidth=float(style["linewidth"])
+                    * MANUSCRIPT_CURVE_LINEWIDTH_SCALE,
                     solid_capstyle="butt",
                     dash_capstyle=style["dash_capstyle"],
                     zorder=3,
@@ -2353,9 +2366,7 @@ def plot_maturation_survival(
         hide_inner_tick_labels(axes)
         add_bottom_visible_xlabels(axes, "Days")
         add_temperature_row_labels(fig, temperatures)
-        add_composite_legend(
-            fig, models, left=0.035, right=0.955, data_handle="line"
-        )
+        add_composite_legend(fig, models, left=0.035, right=0.955, data_handle="line")
         add_aligned_stage_column_labels(fig, axes, stages)
     else:
         hide_inner_tick_labels(axes)
@@ -2398,19 +2409,22 @@ def model_maturation_survival(
         return gamma.sf(
             time_in_stage,
             a=model.stage_counts["egg"],
-            scale=float(model.parameters.egg_delay(temperature)) / model.stage_counts["egg"],
+            scale=float(model.parameters.egg_delay(temperature))
+            / model.stage_counts["egg"],
         )
     if stage == "Larva":
         return gamma.sf(
             time_in_stage,
             a=model.stage_counts["larva"],
-            scale=float(model.parameters.larva_delay(temperature)) / model.stage_counts["larva"],
+            scale=float(model.parameters.larva_delay(temperature))
+            / model.stage_counts["larva"],
         )
     if stage == "Pupa":
         return gamma.sf(
             time_in_stage,
             a=model.stage_counts["pupa"],
-            scale=float(model.parameters.pupa_delay(temperature)) / model.stage_counts["pupa"],
+            scale=float(model.parameters.pupa_delay(temperature))
+            / model.stage_counts["pupa"],
         )
     if stage == "Adult":
         mortality_weights = model.parameters.adult_mortality_weights
@@ -2418,9 +2432,12 @@ def model_maturation_survival(
             return gamma.sf(
                 time_in_stage,
                 a=model.stage_counts["adult"],
-                scale=float(model.parameters.adult_delay(temperature)) / model.stage_counts["adult"],
+                scale=float(model.parameters.adult_delay(temperature))
+                / model.stage_counts["adult"],
             )
-        adult_delay = np.repeat(float(model.parameters.adult_delay(temperature)), len(time_in_stage))
+        adult_delay = np.repeat(
+            float(model.parameters.adult_delay(temperature)), len(time_in_stage)
+        )
         _, survival = adult_substage_occupancy_with_mortality(
             time_in_stage,
             adult_delay,
@@ -2484,10 +2501,7 @@ def adult_lifetime_pdf(
         )
 
     transition_rate = adult_count / adult_delay
-    mortality_rates = (
-        np.asarray(mortality_weights, dtype=float)
-        / adult_delay
-    )
+    mortality_rates = np.asarray(mortality_weights, dtype=float) / adult_delay
     generator = np.zeros((adult_count, adult_count), dtype=float)
     for index in range(adult_count):
         if index < adult_count - 1:
@@ -2508,7 +2522,9 @@ def adult_lifetime_pdf(
 
 def plot_juvenile_panel(data: pd.DataFrame, model: ModelSpec, *, output: Path) -> None:
     data = data.sort_values("temperature")
-    x_grid = np.linspace(float(data["temperature"].min()), float(data["temperature"].max()), 300)
+    x_grid = np.linspace(
+        float(data["temperature"].min()), float(data["temperature"].max()), 300
+    )
     mortality = model.parameters.juvenile_mortality(x_grid)
     egg_rate = competing_risk_transition_rate(
         model.stage_counts["egg"],
@@ -2532,10 +2548,28 @@ def plot_juvenile_panel(data: pd.DataFrame, model: ModelSpec, *, output: Path) -
     )
 
     fig, axes = plt.subplots(1, 2, figsize=(9.2, 3.95), constrained_layout=True)
-    axes[0].scatter(data["temperature"], data["survival_probability"], color="black", s=34, label="Data")
-    axes[0].plot(x_grid, probability, color=model_style(model.key)[0], linewidth=2.0, label=model.label)
+    axes[0].scatter(
+        data["temperature"],
+        data["survival_probability"],
+        color="black",
+        s=34,
+        label="Data",
+    )
+    axes[0].plot(
+        x_grid,
+        probability,
+        color=model_style(model.key)[0],
+        linewidth=2.0,
+        label=model.label,
+    )
     axes[0].set_ylabel("Total juvenile maturation probability")
-    axes[1].plot(x_grid, mortality, color=model_style(model.key)[0], linewidth=2.0, label=model.label)
+    axes[1].plot(
+        x_grid,
+        mortality,
+        color=model_style(model.key)[0],
+        linewidth=2.0,
+        label=model.label,
+    )
     axes[1].set_ylabel("Juvenile mortality (1/day)")
     for ax in axes:
         ax.set_xlabel("Temperature (°C)")
@@ -2545,12 +2579,22 @@ def plot_juvenile_panel(data: pd.DataFrame, model: ModelSpec, *, output: Path) -
     save_figure(fig, output)
 
 
-def plot_daily_fecundity_panel(data: pd.DataFrame, model: ModelSpec, *, output: Path) -> None:
+def plot_daily_fecundity_panel(
+    data: pd.DataFrame, model: ModelSpec, *, output: Path
+) -> None:
     data = data.sort_values("temperature")
-    x_grid = np.linspace(float(data["temperature"].min()), float(data["temperature"].max()), 300)
+    x_grid = np.linspace(
+        float(data["temperature"].min()), float(data["temperature"].max()), 300
+    )
     fig, ax = plt.subplots(figsize=(6.8, 4.3), constrained_layout=True)
     ax.scatter(data["temperature"], data["value"], color="black", s=34, label="Data")
-    ax.plot(x_grid, model.parameters.daily_fecundity(x_grid), color=model_style(model.key)[0], linewidth=2.0, label=model.label)
+    ax.plot(
+        x_grid,
+        model.parameters.daily_fecundity(x_grid),
+        color=model_style(model.key)[0],
+        linewidth=2.0,
+        label=model.label,
+    )
     ax.set_xlabel("Temperature (°C)")
     ax.set_ylabel("Daily eggs per live female")
     ax.xaxis.set_major_locator(MaxNLocator(nbins=6))
@@ -2559,12 +2603,22 @@ def plot_daily_fecundity_panel(data: pd.DataFrame, model: ModelSpec, *, output: 
     save_figure(fig, output)
 
 
-def plot_lifetime_fecundity_panel(data: pd.DataFrame, model: ModelSpec, *, output: Path) -> None:
+def plot_lifetime_fecundity_panel(
+    data: pd.DataFrame, model: ModelSpec, *, output: Path
+) -> None:
     data = data.sort_values("temperature")
-    x_grid = np.linspace(float(data["temperature"].min()), float(data["temperature"].max()), 300)
+    x_grid = np.linspace(
+        float(data["temperature"].min()), float(data["temperature"].max()), 300
+    )
     fig, ax = plt.subplots(figsize=(6.8, 4.3), constrained_layout=True)
     ax.scatter(data["temperature"], data["value"], color="black", s=34, label="Data")
-    ax.plot(x_grid, model.parameters.lifetime_fecundity(x_grid), color=model_style(model.key)[0], linewidth=2.0, label=model.label)
+    ax.plot(
+        x_grid,
+        model.parameters.lifetime_fecundity(x_grid),
+        color=model_style(model.key)[0],
+        linewidth=2.0,
+        label=model.label,
+    )
     ax.set_xlabel("Temperature (°C)")
     ax.set_ylabel("Total lifetime adult fecundity")
     ax.xaxis.set_major_locator(MaxNLocator(nbins=6))
@@ -2573,7 +2627,9 @@ def plot_lifetime_fecundity_panel(data: pd.DataFrame, model: ModelSpec, *, outpu
     save_figure(fig, output)
 
 
-def plot_adult_fecundity_time_panel(data: pd.DataFrame, model: ModelSpec, *, output: Path) -> None:
+def plot_adult_fecundity_time_panel(
+    data: pd.DataFrame, model: ModelSpec, *, output: Path
+) -> None:
     temperatures = sorted(data["temperature"].dropna().unique())
     columns = 3
     rows = int(np.ceil(len(temperatures) / columns))
@@ -2586,7 +2642,9 @@ def plot_adult_fecundity_time_panel(data: pd.DataFrame, model: ModelSpec, *, out
     )
     color = model_style(model.key)[0]
     for ax, temperature in zip(axes.flat, temperatures):
-        temp_data = data.loc[data["temperature"] == temperature].sort_values("adult_day")
+        temp_data = data.loc[data["temperature"] == temperature].sort_values(
+            "adult_day"
+        )
         ax.scatter(
             temp_data["adult_day"],
             temp_data["value"],
@@ -2608,11 +2666,17 @@ def plot_adult_fecundity_time_panel(data: pd.DataFrame, model: ModelSpec, *, out
     save_figure(fig, output)
 
 
-def adult_time_fecundity(model: ModelSpec, temperature: float, adult_days: np.ndarray) -> np.ndarray:
+def adult_time_fecundity(
+    model: ModelSpec, temperature: float, adult_days: np.ndarray
+) -> np.ndarray:
     profile = adult_fecundity_profile_values(model)
     if profile is None:
-        return np.repeat(float(model.parameters.daily_fecundity(temperature)), len(adult_days))
-    adult_delay = np.repeat(float(model.parameters.adult_delay(temperature)), len(adult_days))
+        return np.repeat(
+            float(model.parameters.daily_fecundity(temperature)), len(adult_days)
+        )
+    adult_delay = np.repeat(
+        float(model.parameters.adult_delay(temperature)), len(adult_days)
+    )
     occupancy = adult_substage_occupancy(
         adult_days,
         adult_delay,
@@ -2732,11 +2796,35 @@ def plot_model_demographics(
 ) -> None:
     color, _ = model_style(model.key)
     fig, axes = plt.subplots(1, 2, figsize=(9.2, 3.95), constrained_layout=True)
-    axes[0].plot(curve["temperature"], curve["r_model"], color=color, linewidth=2.0, label=model.label)
-    axes[0].scatter(direct_rates["temperature"], direct_rates["r_euler"], color="black", s=34, label="Data")
+    axes[0].plot(
+        curve["temperature"],
+        curve["r_model"],
+        color=color,
+        linewidth=2.0,
+        label=model.label,
+    )
+    axes[0].scatter(
+        direct_rates["temperature"],
+        direct_rates["r_euler"],
+        color="black",
+        s=34,
+        label="Data",
+    )
     axes[0].set_ylabel("r (1/day)")
-    axes[1].plot(curve["temperature"], curve["R0_model"], color=color, linewidth=2.0, label=model.label)
-    axes[1].scatter(direct_rates["temperature"], direct_rates["R0"], color="black", s=34, label="Data")
+    axes[1].plot(
+        curve["temperature"],
+        curve["R0_model"],
+        color=color,
+        linewidth=2.0,
+        label=model.label,
+    )
+    axes[1].scatter(
+        direct_rates["temperature"],
+        direct_rates["R0"],
+        color="black",
+        s=34,
+        label="Data",
+    )
     axes[1].axhline(1.0, color="#333333", linewidth=0.9, linestyle=":")
     axes[1].set_ylabel("R0")
     for ax in axes:
@@ -2762,14 +2850,39 @@ def plot_model_simulation(model: ModelSpec, *, output: Path) -> None:
     )
     stages = ["eggs", "larvae", "pupae", "adults"]
     colors = ["#6f9ceb", "#5a9f68", "#d08b3e", "#c44e52"]
-    fig, axes = plt.subplots(4, 1, figsize=(9.4, 9.2), constrained_layout=True, sharex=True)
-    axes[0].plot(simulation["day"], simulation["temperature"], color="#333333", linewidth=2.0)
+    fig, axes = plt.subplots(
+        4, 1, figsize=(9.4, 9.2), constrained_layout=True, sharex=True
+    )
+    axes[0].plot(
+        simulation["day"], simulation["temperature"], color="#333333", linewidth=2.0
+    )
     axes[0].set_ylabel("°C")
     for stage, color in zip(stages, colors):
-        axes[1].plot(simulation["day"], simulation[stage], color=color, linewidth=1.7, label=stage.title())
-        axes[2].plot(simulation["day"], simulation[stage].clip(lower=1e-12), color=color, linewidth=1.7, label=stage.title())
-    composition = simulation[stages].div(simulation[stages].sum(axis=1).replace(0, np.nan), axis=0).fillna(0.0)
-    axes[3].stackplot(simulation["day"], [composition[stage] for stage in stages], colors=colors, labels=[stage.title() for stage in stages])
+        axes[1].plot(
+            simulation["day"],
+            simulation[stage],
+            color=color,
+            linewidth=1.7,
+            label=stage.title(),
+        )
+        axes[2].plot(
+            simulation["day"],
+            simulation[stage].clip(lower=1e-12),
+            color=color,
+            linewidth=1.7,
+            label=stage.title(),
+        )
+    composition = (
+        simulation[stages]
+        .div(simulation[stages].sum(axis=1).replace(0, np.nan), axis=0)
+        .fillna(0.0)
+    )
+    axes[3].stackplot(
+        simulation["day"],
+        [composition[stage] for stage in stages],
+        colors=colors,
+        labels=[stage.title() for stage in stages],
+    )
     axes[1].set_ylabel("Expected female abundance")
     axes[2].set_ylabel("Expected female abundance")
     axes[2].set_yscale("log")
@@ -2821,7 +2934,9 @@ def seasonal_simulation_for_model(
             "pupae": 0.0,
             "adults": 0.0,
             "total": 0.0,
-            "daily_fecundity": model.parameters.daily_fecundity(pre_release_temperature),
+            "daily_fecundity": model.parameters.daily_fecundity(
+                pre_release_temperature
+            ),
             "egg_production_rate": 0.0,
         }
     )
@@ -2865,8 +2980,7 @@ def plot_seasonal_simulation_composite(
     stage_colors = ["#6f9ceb", "#5a9f68", "#d08b3e", "#c44e52"]
     stage_linewidth = 2.2
     total_by_model = {
-        key: simulation[stages].sum(axis=1)
-        for key, simulation in simulations.items()
+        key: simulation[stages].sum(axis=1) for key, simulation in simulations.items()
     }
     stage_max_by_model = {
         key: max(float(simulation[stage].max()) for stage in stages)
@@ -2881,9 +2995,12 @@ def plot_seasonal_simulation_composite(
     )
     positive_values = positive_values[positive_values > 0]
     log_min = max(float(np.nanmin(positive_values)) * 0.75, 1e-3)
-    log_max = max(
-        float(simulation[stages].max().max()) for simulation in simulations.values()
-    ) * 1.45
+    log_max = (
+        max(
+            float(simulation[stages].max().max()) for simulation in simulations.values()
+        )
+        * 1.45
+    )
     first_simulation = next(iter(simulations.values()))
     month_ticks, month_labels = month_tick_labels(
         float(first_simulation["day"].min()),
@@ -3039,9 +3156,8 @@ def write_report(
         "# Model Complexity Comparison",
         "",
         "The substage models use fixed stage counts chosen before model comparison.",
-        "Counts are selected by interval-censored Erlang profile likelihood using",
-        "the temperature-specific inspection intervals, then bounded by the scripted",
-        "maximum substage count for numerical tractability.",
+        "Counts are selected by Erlang profile likelihood from the recorded durations,",
+        "then bounded by the scripted maximum substage count for numerical tractability.",
         "Egg, larva, and pupa curves are fitted on the development-rate scale",
         "and parameterized by mean stage duration at 20 C.",
         "",
@@ -3049,7 +3165,9 @@ def write_report(
         "",
         markdown_table(count_table),
         "",
-        image_line(report, plots["counts"], "Interval-censored, capped substage counts"),
+        image_line(
+            report, plots["counts"], "Recorded-duration, capped substage counts"
+        ),
         "",
         "## Main-Paper Models",
         "",
@@ -3059,7 +3177,9 @@ def write_report(
         "",
         image_line(report, plots["main_R0"], "Main model R0 comparison"),
         "",
-        image_line(report, plots["generation_time"], "Main model generation time comparison"),
+        image_line(
+            report, plots["generation_time"], "Main model generation time comparison"
+        ),
         "",
         "## Seasonal ODE Simulation Speed",
         "",
@@ -3071,9 +3191,15 @@ def write_report(
         "",
         "These panels overlay the three main model variants in one figure.",
         "",
-        image_line(report, shared_figures["stage_durations"], "M1/M2/M3 mean stage durations"),
+        image_line(
+            report, shared_figures["stage_durations"], "M1/M2/M3 mean stage durations"
+        ),
         "",
-        image_line(report, shared_figures["delay_distributions"], "M1/M2/M3 delay distributions"),
+        image_line(
+            report,
+            shared_figures["delay_distributions"],
+            "M1/M2/M3 delay distributions",
+        ),
         "",
         image_line(
             report,
@@ -3087,7 +3213,11 @@ def write_report(
             "M1/M2/M3 egg and larva delay distributions with stage-shared x ranges at main-text temperatures",
         ),
         "",
-        image_line(report, shared_figures["maturation_survival"], "M1/M2/M3 stage-duration 1-CDF curves"),
+        image_line(
+            report,
+            shared_figures["maturation_survival"],
+            "M1/M2/M3 stage-duration 1-CDF curves",
+        ),
         "",
         image_line(
             report,
@@ -3095,7 +3225,7 @@ def write_report(
             "M1/M2/M3 stage-duration 1-CDF curves with stage-shared x ranges at main-text temperatures",
         ),
         "",
-        "Juvenile mortality is fitted by binomial likelihood on observed total adult-emergence counts, including zero-emergence temperatures, with a single Gaussian-inverse mortality response across Egg+Larva+Pupa. M1 uses the single-stage juvenile survival fit, while M2 and M3 use the interval-censored, capped juvenile substage fit; mortality panels therefore show only model-implied hazard curves.",
+        "Juvenile mortality is fitted by binomial likelihood on observed total adult-emergence counts, including zero-emergence temperatures, with a single Gaussian-inverse mortality response across Egg+Larva+Pupa. M1 uses the single-stage juvenile survival fit, while M2 and M3 use the recorded-duration, capped juvenile substage fit; mortality panels therefore show only model-implied hazard curves.",
         "",
         image_line(
             report,
@@ -3138,39 +3268,65 @@ def write_report(
             [
                 f"### {model.label}",
                 "",
-                image_line(report, figures["juvenile"], f"{model.label} juvenile maturation and mortality"),
+                image_line(
+                    report,
+                    figures["juvenile"],
+                    f"{model.label} juvenile maturation and mortality",
+                ),
                 "",
             ]
         )
         if "daily_fecundity" in figures:
             lines.extend(
                 [
-                    image_line(report, figures["daily_fecundity"], f"{model.label} daily fecundity"),
+                    image_line(
+                        report,
+                        figures["daily_fecundity"],
+                        f"{model.label} daily fecundity",
+                    ),
                     "",
                 ]
             )
         lines.extend(
             [
-                image_line(report, figures["lifetime_fecundity"], f"{model.label} lifetime adult fecundity"),
+                image_line(
+                    report,
+                    figures["lifetime_fecundity"],
+                    f"{model.label} lifetime adult fecundity",
+                ),
                 "",
-                image_line(report, figures["adult_fecundity_time"], f"{model.label} adult fecundity over time"),
+                image_line(
+                    report,
+                    figures["adult_fecundity_time"],
+                    f"{model.label} adult fecundity over time",
+                ),
                 "",
             ]
         )
         if "adult_timing_profile" in figures:
             lines.extend(
                 [
-                    image_line(report, figures["adult_timing_profile"], f"{model.label} adult fecundity and mortality timing"),
+                    image_line(
+                        report,
+                        figures["adult_timing_profile"],
+                        f"{model.label} adult fecundity and mortality timing",
+                    ),
                     "",
                 ]
             )
         lines.extend(
             [
-                image_line(report, figures["reproduction_kernel"], f"{model.label} reproduction kernel"),
+                image_line(
+                    report,
+                    figures["reproduction_kernel"],
+                    f"{model.label} reproduction kernel",
+                ),
                 "",
                 image_line(report, figures["demographics"], f"{model.label} r and R0"),
                 "",
-                image_line(report, figures["simulation"], f"{model.label} seasonal simulation"),
+                image_line(
+                    report, figures["simulation"], f"{model.label} seasonal simulation"
+                ),
                 "",
             ]
         )
@@ -3180,7 +3336,7 @@ def write_report(
             "",
             f"- Summary: `{output_dir / 'summary.csv'}`",
             f"- Seasonal simulation speed: `{output_dir / 'seasonal_simulation_speed.csv'}`",
-            f"- Substage counts: `{output_dir / 'variance_matched_substage_counts.csv'}`",
+            f"- Substage counts: `{output_dir / 'stage_substage_counts.csv'}`",
             f"- Adult exit-chain fecundity profile: `{output_dir / 'adult_exit_chain_fecundity_profile.csv'}`",
         ]
     )
