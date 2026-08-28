@@ -7,10 +7,11 @@ import pandas as pd
 from scipy.optimize import curve_fit
 from scipy.optimize import brentq
 from scipy.optimize import minimize
-from scipy.optimize import minimize_scalar
 from scipy.linalg import expm
 from scipy.special import erf
 from scipy.stats import gamma as gamma_distribution
+
+from r_r0_pop.demography import build_adult_age_schedule
 
 STAGES = ("Egg", "Larva", "Pupa")
 STAGE_COUNT_KEYS = {
@@ -569,13 +570,15 @@ def fit_juvenile_mortality(
     stage_fits: dict[str, FitResult] | None = None,
     stage_counts: dict[str, int] | None = None,
 ) -> FitResult:
+    p0 = _juvenile_mortality_initial_values(data)
+    bounds = ([0.0, -100.0, 1e-3], [np.inf, 100.0, np.inf])
     if stage_fits is not None and stage_counts is not None:
         return _fit_juvenile_mortality_to_survival(
             data,
             function_name="gaussinv",
             function=gaussinv,
-            p0=(float(data["value"].median()), 15.0, 15.0),
-            bounds=([0.0, 10.0, 10.0], [np.inf, 20.0, np.inf]),
+            p0=p0,
+            bounds=bounds,
             stage_fits=stage_fits,
             stage_counts=stage_counts,
         )
@@ -584,9 +587,29 @@ def fit_juvenile_mortality(
         name="Juvenile mortality rate",
         function_name="gaussinv",
         function=gaussinv,
-        p0=(float(data["value"].median()), 15.0, 15.0),
-        bounds=([0.0, 10.0, 10.0], [np.inf, 20.0, np.inf]),
+        p0=p0,
+        bounds=bounds,
     )
+
+
+def _juvenile_mortality_initial_values(
+    data: pd.DataFrame,
+) -> tuple[float, float, float]:
+    """Choose an interior, data-informed start for inverse-Gaussian mortality."""
+
+    observed = data.loc[
+        data["value"].notna() & np.isfinite(data["value"]) & (data["value"] >= 0)
+    ]
+    if observed.empty:
+        return 0.02, 20.0, 8.0
+    minimum_row = observed.loc[observed["value"].idxmin()]
+    minimum = max(float(minimum_row["value"]), 1e-6)
+    optimum_temperature = float(minimum_row["temperature"])
+    temperature_span = float(
+        observed["temperature"].max() - observed["temperature"].min()
+    )
+    sigma = max(2.0, temperature_span / 3.0)
+    return minimum, optimum_temperature, sigma
 
 
 def fit_adult_delay(data: pd.DataFrame) -> FitResult:
@@ -706,8 +729,9 @@ def adult_delay_summary(adult_survival: pd.DataFrame) -> pd.DataFrame:
 
 def lifetime_fecundity_summary(fertility: pd.DataFrame) -> pd.DataFrame:
     totals = fertility.groupby(["temperature", "female"], as_index=False).agg(
-        total_eggs=("eggs", "sum")
+        total_eggs=("eggs", lambda values: values.sum(min_count=1))
     )
+    totals = totals.dropna(subset=["total_eggs"])
     return (
         totals.groupby("temperature", as_index=False)
         .agg(value=("total_eggs", "mean"), n=("female", "size"))
@@ -716,12 +740,15 @@ def lifetime_fecundity_summary(fertility: pd.DataFrame) -> pd.DataFrame:
 
 
 def daily_fecundity_summary(fertility: pd.DataFrame) -> pd.DataFrame:
-    return (
-        fertility.dropna(subset=["eggs"])
-        .groupby("temperature", as_index=False)
-        .agg(value=("eggs", "mean"), n=("eggs", "size"))
-        .sort_values("temperature")
+    adult_age = build_adult_age_schedule(fertility)
+    if adult_age.empty:
+        return pd.DataFrame(columns=["temperature", "value", "n"])
+    summary = adult_age.groupby("temperature", as_index=False).agg(
+        total_eggs=("total_eggs", "sum"),
+        n=("live_females", "sum"),
     )
+    summary["value"] = summary["total_eggs"] / summary["n"]
+    return summary[["temperature", "value", "n"]].sort_values("temperature")
 
 
 def stage_duration_observations(
@@ -752,17 +779,9 @@ def stage_duration_observations(
             stage_data[["stage", "temperature", "duration"]]
         )
 
-    adult_lifetimes = pd.concat(
-        [
-            adult_survival.loc[adult_survival["AM"] > 0, ["temperature", "AM"]].rename(
-                columns={"AM": "duration"}
-            ),
-            adult_survival.loc[adult_survival["AF"] > 0, ["temperature", "AF"]].rename(
-                columns={"AF": "duration"}
-            ),
-        ],
-        ignore_index=True,
-    )
+    adult_lifetimes = adult_survival.loc[
+        adult_survival["AF"] > 0, ["temperature", "AF"]
+    ].rename(columns={"AF": "duration"})
     adult_lifetimes = adult_lifetimes.loc[adult_lifetimes["duration"] > 0].copy()
     adult_lifetimes["stage"] = "Adult"
     rows.append(
@@ -773,6 +792,7 @@ def stage_duration_observations(
 
 def erlang_stage_counts(
     duration_observations: pd.DataFrame,
+    mean_duration_fits: dict[str, FitResult],
     *,
     minimum: int = 1,
     maximum: int = 40,
@@ -780,11 +800,12 @@ def erlang_stage_counts(
 ) -> tuple[dict[str, int], pd.DataFrame]:
     """Choose capped Erlang-chain lengths from observed durations.
 
-    The Erlang shape is common across temperatures within a stage, while its
-    mean is profiled separately for every temperature.
+    The Erlang shape is common across temperatures within a stage. Its mean at
+    each observation's temperature is fixed to the previously fitted mean-
+    duration response, leaving only the integer shape to be selected.
 
     The likelihood-selected integer shape is subsequently capped at `maximum`
-    for numerical tractability. If the profile optimum reaches
+    for numerical tractability. If the likelihood optimum reaches
     `search_maximum`, `raw_substage_count_is_lower_bound` is true.
     """
 
@@ -799,6 +820,14 @@ def erlang_stage_counts(
             "Stage counts require columns: "
             + ", ".join(sorted(missing))
         )
+    missing_fits = set(duration_observations["stage"].unique()) - set(
+        mean_duration_fits
+    )
+    if missing_fits:
+        raise ValueError(
+            "Stage counts require fitted mean-duration responses for: "
+            + ", ".join(sorted(missing_fits))
+        )
     if minimum < 1 or maximum < minimum or search_maximum < maximum:
         raise ValueError(
             "Stage-count bounds must satisfy 1 <= minimum <= maximum <= search_maximum."
@@ -806,43 +835,32 @@ def erlang_stage_counts(
 
     rows = []
     for stage, stage_data in duration_observations.groupby("stage", sort=False):
-        candidate_scores = []
-        for candidate in range(minimum, search_maximum + 1):
-            negative_log_likelihood = 0.0
-            fitted_temperature_count = 0
-            for _, temperature_data in stage_data.groupby("temperature", sort=True):
-                observed = temperature_data["duration"].to_numpy(dtype=float)
-                if len(observed) == 0:
-                    continue
-
-                observed_mean = float(np.mean(observed))
-                lower_mean = max(observed_mean * 0.1, 1e-8)
-                upper_mean = max(observed_mean * 2.0, lower_mean * 1.01)
-
-                def profile_objective(log_mean: float) -> float:
-                    mean = float(np.exp(log_mean))
-                    scale = mean / candidate
-                    return -float(
-                        gamma_distribution.logpdf(
-                            observed, a=candidate, scale=scale
-                        ).sum()
-                    )
-
-                result = minimize_scalar(
-                    profile_objective,
-                    bounds=(np.log(lower_mean), np.log(upper_mean)),
-                    method="bounded",
-                )
-                if not result.success or not np.isfinite(result.fun):
-                    negative_log_likelihood = np.inf
-                    break
-                negative_log_likelihood += float(result.fun)
-                fitted_temperature_count += 1
-            candidate_scores.append(
-                (negative_log_likelihood, candidate, fitted_temperature_count)
+        observed = stage_data["duration"].to_numpy(dtype=float)
+        if np.any(~np.isfinite(observed)) or np.any(observed <= 0):
+            raise ValueError(
+                f"Stage durations must be finite and positive for {stage}."
+            )
+        temperatures = stage_data["temperature"].to_numpy(dtype=float)
+        fitted_means = np.asarray(
+            predict(mean_duration_fits[stage], temperatures), dtype=float
+        )
+        if np.any(~np.isfinite(fitted_means)) or np.any(fitted_means <= 0):
+            raise ValueError(
+                f"Fitted mean durations must be finite and positive for {stage}."
             )
 
-        best_score, raw_count, temperature_count = min(
+        candidate_scores = []
+        for candidate in range(minimum, search_maximum + 1):
+            negative_log_likelihood = -float(
+                gamma_distribution.logpdf(
+                    observed,
+                    a=candidate,
+                    scale=fitted_means / candidate,
+                ).sum()
+            )
+            candidate_scores.append((negative_log_likelihood, candidate))
+
+        best_score, raw_count = min(
             candidate_scores, key=lambda item: item[0]
         )
         count = min(maximum, max(minimum, int(raw_count)))
@@ -850,13 +868,13 @@ def erlang_stage_counts(
             {
                 "stage": stage,
                 "stage_key": STAGE_COUNT_KEYS[stage],
-                "selection_method": "Erlang profile likelihood",
+                "selection_method": "Conditional Erlang likelihood",
                 "raw_substage_count": int(raw_count),
                 "raw_substage_count_is_lower_bound": bool(raw_count == search_maximum),
                 "substage_count": count,
                 "substage_cap": maximum,
                 "negative_log_likelihood": best_score,
-                "temperature_count": int(temperature_count),
+                "temperature_count": int(stage_data["temperature"].nunique()),
                 "observation_count": int(len(stage_data)),
             }
         )
@@ -939,12 +957,7 @@ def fit_adult_substage_fecundity_profile(
     while allowing egg laying to shift earlier or later within the adult chain.
     """
 
-    daily = (
-        fertility.dropna(subset=["eggs"])
-        .groupby(["temperature", "adult_day"], as_index=False)
-        .agg(mean_eggs=("eggs", "mean"), live_females=("eggs", "size"))
-        .sort_values(["temperature", "adult_day"])
-    )
+    daily = adult_daily_reproduction_summary(fertility)
     if daily.empty:
         raise ValueError("Cannot fit adult fecundity profile without egg observations.")
 
@@ -1281,12 +1294,7 @@ def parametric_adult_timing_weights(
 
 
 def adult_daily_reproduction_summary(fertility: pd.DataFrame) -> pd.DataFrame:
-    return (
-        fertility.dropna(subset=["eggs"])
-        .groupby(["temperature", "adult_day"], as_index=False)
-        .agg(mean_eggs=("eggs", "mean"), live_females=("eggs", "size"))
-        .sort_values(["temperature", "adult_day"])
-    )
+    return build_adult_age_schedule(fertility)
 
 
 def adult_daily_survival_summary(adult_survival: pd.DataFrame) -> pd.DataFrame:
@@ -1763,6 +1771,8 @@ def _fit_juvenile_mortality_to_survival(
             method="L-BFGS-B",
             options={"maxiter": 100_000},
         )
+        if not result.success or not np.isfinite(result.fun):
+            raise RuntimeError(f"Juvenile mortality fit failed: {result.message}")
         params = result.x
     else:
         params, _ = curve_fit(

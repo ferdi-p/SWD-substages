@@ -124,33 +124,66 @@ def verify_intervention_outputs() -> None:
     if set(thresholds["intervention"]) != {"juvenile", "adult"}:
         raise RuntimeError("Expected both juvenile and adult intervention results")
 
+    for intervention in ("juvenile", "adult"):
+        grid = read_required_csv(
+            OUTPUT_DIR
+            / "mortality_interventions"
+            / f"{intervention}_mortality_intervention_r.csv"
+        )
+        baseline = grid.loc[np.isclose(grid["added_mortality_per_day"], 0.0)]
+        for row in baseline.itertuples(index=False):
+            rates = read_required_csv(
+                OUTPUT_DIR
+                / "model_complexity"
+                / f"{row.model}_demographic_rates.csv"
+            )
+            expected = rates.loc[
+                np.isclose(rates["temperature"], row.temperature), "r_model"
+            ]
+            if len(expected) != 1:
+                raise RuntimeError(
+                    f"Could not find the {row.temperature:g} C baseline for {row.model}"
+                )
+            np.testing.assert_allclose(
+                row.r,
+                expected.iloc[0],
+                rtol=0.0,
+                atol=1e-12,
+                err_msg=(
+                    f"{intervention} intervention baseline differs from the main "
+                    f"model for {row.model} at {row.temperature:g} C"
+                ),
+            )
+
 
 def verify_manuscript_figures() -> int:
-    manuscript = MANUSCRIPT_DIR / "popModels.tex"
-    text = manuscript.read_text(encoding="utf-8")
-    references = re.findall(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}", text)
+    sources = (
+        MANUSCRIPT_DIR / "popModels.tex",
+        MANUSCRIPT_DIR / "supplementary_appendices.tex",
+        MANUSCRIPT_DIR / "supplementary_figures.tex",
+    )
+    missing_sources = [str(path) for path in sources if not path.is_file()]
+    if missing_sources:
+        raise RuntimeError(f"Missing manuscript sources: {missing_sources}")
+
+    main_text = sources[0].read_text(encoding="utf-8")
+    if r"\appendix" in main_text:
+        raise RuntimeError("The main manuscript still contains an appendix boundary")
+
+    references: list[str] = []
+    for source in sources:
+        text = source.read_text(encoding="utf-8")
+        references.extend(
+            re.findall(r"\\includegraphics(?:\[[^\]]*\])?\{([^}]+)\}", text)
+        )
     missing = [
         reference
         for reference in references
         if not (MANUSCRIPT_DIR / reference).is_file()
     ]
     if missing:
-        raise RuntimeError(f"Missing manuscript figures: {missing}")
-
-    supplementary = (
-        MANUSCRIPT_DIR
-        / "supplementary_figures"
-        / "Figure_S1_maturation_survival_all_temperatures.pdf",
-        MANUSCRIPT_DIR
-        / "supplementary_figures"
-        / "Figure_S2_adult_reproduction_all_temperatures.pdf",
-    )
-    missing_supplementary = [str(path) for path in supplementary if not path.is_file()]
-    if missing_supplementary:
-        raise RuntimeError(
-            f"Missing supplementary figures: {missing_supplementary}"
-        )
-    return len(references) + len(supplementary)
+        raise RuntimeError(f"Missing manuscript/SI figures: {missing}")
+    return len(references)
 
 
 def read_required_csv(path: Path) -> pd.DataFrame:

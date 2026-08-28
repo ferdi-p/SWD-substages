@@ -6,6 +6,7 @@ import pytest
 from r_r0_pop.life_history_fits import (
     adult_substage_occupancy_with_mortality,
     adult_delay_summary,
+    erlang_stage_counts,
     fit_juvenile_mortality,
     fit_adult_mortality_rate,
     fit_q10_deactivation_response,
@@ -19,6 +20,7 @@ from r_r0_pop.life_history_fits import (
     juvenile_mortality_summary,
     juvenile_mortality_summary_for_stage_chain,
     juvenile_mortality_rate_for_stage_chain,
+    lifetime_fecundity_summary,
     maturation_delay_summary,
     parametric_adult_timing_weights,
     predict,
@@ -99,6 +101,24 @@ def test_stage_duration_summaries_use_recorded_durations():
     assert observations.loc[
         observations["stage"] == "Larva", "duration"
     ].tolist() == pytest.approx([3.0, 3.0])
+    assert observations.loc[
+        observations["stage"] == "Adult", "duration"
+    ].tolist() == pytest.approx([6.0])
+
+
+def test_lifetime_fecundity_excludes_females_without_observations():
+    fertility = pd.DataFrame(
+        {
+            "temperature": [29.0, 29.0, 29.0],
+            "female": [1, 1, 2],
+            "eggs": [10.0, 5.0, float("nan")],
+        }
+    )
+
+    summary = lifetime_fecundity_summary(fertility).iloc[0]
+
+    assert summary["value"] == pytest.approx(15.0)
+    assert summary["n"] == 1
 
 
 def test_default_stage_counts_match_manuscript_m2_baseline():
@@ -163,6 +183,30 @@ def test_single_season_can_initialize_first_adult_substage():
     )
 
     assert math.isclose(float(result["adults"].iloc[0]), 1.0)
+
+
+def test_single_season_reports_substage_weighted_egg_production():
+    parameters = simple_life_history_parameters()
+    parameters = LifeHistoryParameters(
+        **{
+            **parameters.__dict__,
+            "female_fraction": 0.5,
+            "adult_fecundity_profile": (2.0, 0.0),
+        }
+    )
+    result = simulate_single_season(
+        parameters,
+        SimulationConfig(
+            start_day=59,
+            end_day=60,
+            initial_adults=1.0,
+            initial_adult_substage=0,
+            stage_counts={"egg": 1, "larva": 1, "pupa": 1, "adult": 2},
+        ),
+    )
+
+    expected = 0.5 * 2.0 * float(parameters.daily_fecundity(result["temperature"].iloc[0]))
+    assert result["egg_production_rate"].iloc[0] == pytest.approx(expected)
 
 
 def test_fixed_temperature_model_rates_are_finite():
@@ -441,6 +485,35 @@ def test_variance_matched_stage_counts_uses_mean_temperature_cv2():
 
     assert counts == {"egg": 25}
     assert table.loc[0, "substage_count"] == 25
+
+
+def test_erlang_stage_counts_conditions_on_fitted_mean_duration():
+    observations = pd.DataFrame(
+        {
+            "stage": ["Egg"] * 6,
+            "temperature": [20.0] * 6,
+            "duration": [8.0, 10.0, 12.0, 8.0, 10.0, 12.0],
+        }
+    )
+    mean_10_fit = FitResult("Egg", "gaussinv", (10.0, 20.0, 1.0), 0.0, 1.0, 1)
+    mean_20_fit = FitResult("Egg", "gaussinv", (20.0, 20.0, 1.0), 0.0, 1.0, 1)
+
+    counts_10, table_10 = erlang_stage_counts(
+        observations,
+        {"Egg": mean_10_fit},
+        maximum=100,
+        search_maximum=100,
+    )
+    counts_20, _ = erlang_stage_counts(
+        observations,
+        {"Egg": mean_20_fit},
+        maximum=100,
+        search_maximum=100,
+    )
+
+    assert counts_10 == {"egg": 37}
+    assert counts_20 == {"egg": 3}
+    assert table_10.loc[0, "selection_method"] == "Conditional Erlang likelihood"
 
 
 def test_log_shared_stage_delay_fit_returns_positive_stage_responses():

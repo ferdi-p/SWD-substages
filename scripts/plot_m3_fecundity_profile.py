@@ -11,6 +11,7 @@ import matplotlib
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt
+from matplotlib.ticker import MaxNLocator
 import pandas as pd
 
 from r_r0_pop.paths import MANUSCRIPT_FIGURE_DIR, OUTPUT_DIR
@@ -58,7 +59,7 @@ def main() -> None:
     )
     ax.set_xlabel("Adult substage, $i$")
     ax.set_ylabel("Relative fecundity weight")
-    ax.set_xticks(profile["adult_substage"])
+    ax.xaxis.set_major_locator(MaxNLocator(nbins=8, integer=True))
     ax.set_xlim(0.5, float(profile["adult_substage"].max()) + 0.5)
     ax.set_ylim(bottom=0.0)
     clean_axis(ax)

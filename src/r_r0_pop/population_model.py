@@ -227,6 +227,13 @@ def simulate_single_season(
         phase=config.temperature_phase,
     )
     adults = totals["adult"]
+    adult_states = solution.y[slices["adult"]].T
+    adult_fecundity = parameters.adult_substage_fecundity(
+        temperature, config.counts["adult"]
+    )
+    egg_production_rate = parameters.female_fraction * np.sum(
+        adult_fecundity * adult_states, axis=1
+    )
 
     return pd.DataFrame(
         {
@@ -238,11 +245,7 @@ def simulate_single_season(
             "adults": adults,
             "total": sum(totals.values()),
             "daily_fecundity": parameters.daily_fecundity(temperature),
-            "egg_production_rate": (
-                parameters.female_fraction
-                * adults
-                * parameters.daily_fecundity(temperature)
-            ),
+            "egg_production_rate": egg_production_rate,
         }
     )
 

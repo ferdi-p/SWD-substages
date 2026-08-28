@@ -3,11 +3,13 @@ import math
 import pandas as pd
 
 from r_r0_pop.demography import (
+    build_adult_age_schedule,
     build_reproduction_schedule,
     euler_lotka_r,
     generation_time_euler,
     net_reproductive_rate,
 )
+from r_r0_pop.life_history_fits import daily_fecundity_summary
 
 
 def test_reproduction_schedule_uses_juvenile_survival_without_initial_sex_ratio():
@@ -78,6 +80,27 @@ def test_reproduction_schedule_aligns_each_female_from_emergence():
     assert schedule["lx"].tolist() == [0.8, 0.8, 0.4, 0.4]
     assert schedule["mx"].tolist() == [0.0, 0.5, 0.0, 2.0]
     assert math.isclose(net_reproductive_rate(schedule), 1.2)
+
+
+def test_adult_age_schedule_and_daily_rate_include_preoviposition_zeros():
+    fertility = pd.DataFrame(
+        {
+            "temperature": [20.0, 20.0, 20.0],
+            "female": [1, 1, 2],
+            "adult_day": [1, 2, 1],
+            "eggs": [2.0, 4.0, float("nan")],
+            "preoviposition_days": [2.0, 2.0, float("nan")],
+        }
+    )
+
+    schedule = build_adult_age_schedule(fertility)
+    summary = daily_fecundity_summary(fertility).iloc[0]
+
+    assert schedule["adult_day"].tolist() == [1, 2, 3, 4]
+    assert schedule["mean_eggs"].tolist() == [0.0, 0.0, 2.0, 4.0]
+    assert schedule["live_females"].tolist() == [1, 1, 1, 1]
+    assert summary["n"] == 4
+    assert summary["value"] == 1.5
 
 
 def test_reproduction_schedule_ignores_trailing_missing_egg_records():

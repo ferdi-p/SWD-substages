@@ -16,6 +16,7 @@ import numpy as np
 import pandas as pd
 from scipy.linalg import eigvals
 
+from r_r0_pop.life_history_fits import FUNCTION_PARAMETER_NAMES
 from r_r0_pop.paper_config import (
     MS_LEGEND_Y,
     PAPER_MODEL_KEYS,
@@ -30,6 +31,7 @@ from r_r0_pop.paths import MANUSCRIPT_FIGURE_DIR, OUTPUT_DIR, REPORT_DIR
 from r_r0_pop.plotting import clean_axis, save_figure, temperature_palette
 from r_r0_pop.population_model import (
     LifeHistoryParameters,
+    TemperatureResponse,
     fixed_temperature_matrix,
     life_history_parameters_from_table,
 )
@@ -185,6 +187,21 @@ def main() -> None:
 def load_main_models(model_dir: Path) -> tuple[ModelSpec, ...]:
     parameter_table = pd.read_csv(model_dir / "base_temperature_parameters.csv")
     base_parameters = life_history_parameters_from_table(parameter_table)
+    juvenile_fits = pd.read_csv(model_dir / "juvenile_survival_fit_parameters.csv")
+
+    def parameters_for_juvenile_fit(model_key: str) -> LifeHistoryParameters:
+        row = juvenile_fits.loc[juvenile_fits["model"] == model_key].iloc[0]
+        function = str(row["function"])
+        parameter_names = FUNCTION_PARAMETER_NAMES[function]
+        juvenile_mortality = TemperatureResponse(
+            name="Juvenile mortality rate",
+            function=function,
+            parameters=tuple(float(row[name]) for name in parameter_names),
+        )
+        return replace(base_parameters, juvenile_mortality=juvenile_mortality)
+
+    single_parameters = parameters_for_juvenile_fit("m1_single_stage")
+    substage_parameters = parameters_for_juvenile_fit("m2_m3_substage")
     count_table = pd.read_csv(model_dir / "stage_substage_counts.csv")
     substage_counts = {
         str(row.stage_key): int(row.substage_count)
@@ -209,14 +226,14 @@ def load_main_models(model_dir: Path) -> tuple[ModelSpec, ...]:
             label="M1 single stages",
             scope="main",
             stage_counts=single_counts,
-            parameters=base_parameters,
+            parameters=single_parameters,
         ),
         ModelSpec(
             key="m2_substage_transit",
             label="M2 juvenile substages, single adult",
             scope="main",
             stage_counts=juvenile_substage_counts,
-            parameters=base_parameters,
+            parameters=substage_parameters,
         ),
         ModelSpec(
             key="m3_adult_exit_chain_fecundity",
@@ -224,7 +241,7 @@ def load_main_models(model_dir: Path) -> tuple[ModelSpec, ...]:
             scope="main",
             stage_counts=substage_counts,
             parameters=replace(
-                base_parameters,
+                substage_parameters,
                 daily_fecundity_response=None,
                 adult_fecundity_profile=exit_fecundity_profile,
                 adult_mortality_weights=None,

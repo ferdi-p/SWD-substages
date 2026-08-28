@@ -162,23 +162,8 @@ def main() -> None:
 
     count_path = args.output_dir / "stage_substage_counts.csv"
     durations = stage_duration_observations(development, adult_survival, fertility)
-    if args.reuse_fits:
-        count_table = pd.read_csv(count_path)
-        substage_counts = {
-            str(row.stage_key): int(row.substage_count)
-            for row in count_table.itertuples(index=False)
-        }
-    else:
-        substage_counts, count_table = erlang_stage_counts(
-            durations, maximum=args.max_substages
-        )
-        count_table.to_csv(count_path, index=False)
-
     summaries = {
         "stage": maturation_delay_summary(development, fertility),
-        "juvenile": juvenile_mortality_summary_for_stage_chain(
-            development, adult_survival, substage_counts
-        ),
         "juvenile_stage_survival": juvenile_stage_survival_observations(
             development, adult_survival
         ),
@@ -189,6 +174,30 @@ def main() -> None:
             columns={"mean_eggs": "value"}
         ),
     }
+    stage_fits = None
+    adult_duration_fit = None
+    if args.reuse_fits:
+        count_table = pd.read_csv(count_path)
+        substage_counts = {
+            str(row.stage_key): int(row.substage_count)
+            for row in count_table.itertuples(index=False)
+        }
+    else:
+        stage_fits = fit_stage_parameters(summaries["stage"])
+        adult_duration_fit = fit_q10_deactivation_response(
+            summaries["adult"],
+            name="Adult duration",
+        )
+        substage_counts, count_table = erlang_stage_counts(
+            durations,
+            {**stage_fits, "Adult": adult_duration_fit},
+            maximum=args.max_substages,
+        )
+        count_table.to_csv(count_path, index=False)
+
+    summaries["juvenile"] = juvenile_mortality_summary_for_stage_chain(
+        development, adult_survival, substage_counts
+    )
     parameter_path = args.output_dir / "base_temperature_parameters.csv"
     juvenile_survival_parameters_path = (
         args.output_dir / "juvenile_survival_fit_parameters.csv"
@@ -208,9 +217,14 @@ def main() -> None:
         parameter_table = pd.read_csv(parameter_path)
         juvenile_survival_parameters = pd.read_csv(juvenile_survival_parameters_path)
     else:
-        parameter_table = fit_base_parameter_table(summaries)
+        assert stage_fits is not None
+        assert adult_duration_fit is not None
+        parameter_table = fit_base_parameter_table(
+            summaries,
+            stage_fits=stage_fits,
+            adult_duration_fit=adult_duration_fit,
+        )
         single_counts = {key: 1 for key in substage_counts}
-        stage_fits = fit_stage_parameters(summaries["stage"])
         juvenile_survival_parameters = fit_model_specific_juvenile_survival_parameters(
             parameter_table,
             summaries["juvenile"],
@@ -380,7 +394,7 @@ def main() -> None:
         models=[model for model in models if model.scope == "main"],
         model_metric="R0_model",
         direct_metric="R0",
-        ylabel="Net reproductive rate, R0",
+        ylabel="Net reproduction rate, R0",
         output=R0_plot,
     )
     plot_demographic_models(
@@ -451,15 +465,21 @@ def main() -> None:
 
 def fit_base_parameter_table(
     summaries: dict[str, pd.DataFrame],
+    *,
+    stage_fits: dict[str, FitResult] | None = None,
+    adult_duration_fit: FitResult | None = None,
 ) -> pd.DataFrame:
-    stage_fits = fit_stage_parameters(summaries["stage"])
+    if stage_fits is None:
+        stage_fits = fit_stage_parameters(summaries["stage"])
+    if adult_duration_fit is None:
+        adult_duration_fit = fit_q10_deactivation_response(
+            summaries["adult"],
+            name="Adult duration",
+        )
     fits: list[FitResult] = [
         *stage_fits.values(),
         fit_juvenile_mortality(summaries["juvenile"]),
-        fit_q10_deactivation_response(
-            summaries["adult"],
-            name="Adult duration",
-        ),
+        adult_duration_fit,
         fit_skew_lifetime_fecundity(summaries["fecundity"]),
     ]
     return pd.DataFrame([fit.as_dict() for fit in fits])
@@ -1941,7 +1961,7 @@ def plot_adult_reproduction_time_comparison(
     for ax in axes.flat[len(temperatures) :]:
         ax.set_visible(False)
     hide_inner_tick_labels(axes)
-    fig.supxlabel("Days")
+    fig.supxlabel("Adult day since emergence")
     fig.supylabel("Eggs per live female")
     add_composite_legend(
         fig,
@@ -1976,7 +1996,7 @@ def plot_demographic_metric_row(
             axes[0],
             "R0_model",
             "R0",
-            "Net reproductive rate $R_0$",
+            "Net reproduction rate $R_0$",
             "$R_0$",
         ),
         (
@@ -3156,7 +3176,8 @@ def write_report(
         "# Model Complexity Comparison",
         "",
         "The substage models use fixed stage counts chosen before model comparison.",
-        "Counts are selected by Erlang profile likelihood from the recorded durations,",
+        "Counts are selected by conditional Erlang likelihood from the recorded durations,",
+        "using the previously fitted temperature-dependent mean durations,",
         "then bounded by the scripted maximum substage count for numerical tractability.",
         "Egg, larva, and pupa curves are fitted on the development-rate scale",
         "and parameterized by mean stage duration at 20 C.",

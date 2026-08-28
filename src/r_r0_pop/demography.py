@@ -8,6 +8,123 @@ import pandas as pd
 from r_r0_pop.data import BASER_POOLED_ADULT_FEMALE_FRACTION
 
 
+def build_adult_age_schedule(fertility: pd.DataFrame) -> pd.DataFrame:
+    """Summarize observed egg production by adult day since emergence.
+
+    Females without any observed egg record are excluded. For every available
+    female, recorded preoviposition days are inserted as live adult days with
+    zero fecundity, and reproductive day ``d`` is placed at adult day
+    ``preoviposition_days + d`` (with adult day 1 beginning at emergence).
+    """
+
+    schedules: list[pd.DataFrame] = []
+    for temperature, temp_data in fertility.groupby("temperature", sort=True):
+        female_summary = temp_data.groupby("female", as_index=False).agg(
+            observed_egg_days=("eggs", "count")
+        )
+        available_females = female_summary.loc[
+            female_summary["observed_egg_days"] > 0, "female"
+        ]
+        temp_data = temp_data.loc[
+            temp_data["female"].isin(available_females)
+        ].copy()
+        female_count = int(available_females.nunique())
+        if female_count == 0:
+            continue
+
+        individual_records: list[dict[str, float | int | str]] = []
+        for female, female_data in temp_data.groupby("female", sort=False):
+            preoviposition_values = (
+                female_data["preoviposition_days"].dropna().unique()
+            )
+            if len(preoviposition_values) != 1:
+                raise ValueError(
+                    f"Expected one preoviposition duration for female {female!r} "
+                    f"at {temperature:g} C; found {len(preoviposition_values)}."
+                )
+            preoviposition_days = float(preoviposition_values[0])
+            if preoviposition_days < 0 or not preoviposition_days.is_integer():
+                raise ValueError(
+                    "Preoviposition duration must be a nonnegative whole number "
+                    f"of days; found {preoviposition_days} for female {female!r} "
+                    f"at {temperature:g} C."
+                )
+            preoviposition_days = int(preoviposition_days)
+
+            for adult_age in range(preoviposition_days):
+                individual_records.append(
+                    {
+                        "adult_day": adult_age + 1,
+                        "eggs": 0.0,
+                        "individual_phase": "adult_zero_fecundity",
+                    }
+                )
+
+            for row in female_data.sort_values("adult_day").itertuples(index=False):
+                if pd.isna(row.eggs):
+                    continue
+                individual_records.append(
+                    {
+                        "adult_day": preoviposition_days + int(row.adult_day),
+                        "eggs": float(row.eggs),
+                        "individual_phase": "reproductive",
+                    }
+                )
+
+        aligned = pd.DataFrame(individual_records)
+        records = []
+        for adult_day, age_data in aligned.groupby("adult_day", sort=True):
+            live_count = len(age_data)
+            zero_fecundity_count = int(
+                (age_data["individual_phase"] == "adult_zero_fecundity").sum()
+            )
+            reproductive_count = live_count - zero_fecundity_count
+            if zero_fecundity_count == live_count:
+                schedule_phase = "adult_zero_fecundity"
+            elif zero_fecundity_count == 0:
+                schedule_phase = "reproductive"
+            else:
+                schedule_phase = "mixed"
+            records.append(
+                {
+                    "temperature": float(temperature),
+                    "adult_day": int(adult_day),
+                    "adult_age_days": int(adult_day) - 1,
+                    "mean_eggs": float(age_data["eggs"].mean()),
+                    "total_eggs": float(age_data["eggs"].sum()),
+                    "live_females": live_count,
+                    "initial_females": female_count,
+                    "adult_survival": live_count / female_count,
+                    "zero_fecundity_females": zero_fecundity_count,
+                    "reproductive_females": reproductive_count,
+                    "schedule_phase": schedule_phase,
+                }
+            )
+        if records:
+            schedules.append(pd.DataFrame(records))
+
+    columns = [
+        "temperature",
+        "adult_day",
+        "adult_age_days",
+        "mean_eggs",
+        "total_eggs",
+        "live_females",
+        "initial_females",
+        "adult_survival",
+        "zero_fecundity_females",
+        "reproductive_females",
+        "schedule_phase",
+    ]
+    if not schedules:
+        return pd.DataFrame(columns=columns)
+    return (
+        pd.concat(schedules, ignore_index=True)
+        .sort_values(["temperature", "adult_day"])
+        .reset_index(drop=True)
+    )
+
+
 def net_reproductive_rate(schedule: pd.DataFrame) -> float:
     """Calculate standard R0 = sum(lx * mx)."""
 
@@ -101,6 +218,7 @@ def build_reproduction_schedule(
     analyses and backwards compatibility.
     """
 
+    adult_age_schedule = build_adult_age_schedule(fertility)
     schedules: list[pd.DataFrame] = []
     for temp, fert_temp in fertility.groupby("temperature", sort=True):
         preadult_row = female_preadult.loc[female_preadult["temperature"] == temp]
@@ -137,100 +255,34 @@ def build_reproduction_schedule(
                 }
             )
 
-        female_summary = (
-            fert_temp.groupby("female", as_index=False)
-            .agg(
-                preoviposition_days=("preoviposition_days", "first"),
-                observed_egg_days=("eggs", "count"),
-            )
-        )
-        available_females = female_summary.loc[
-            female_summary["observed_egg_days"] > 0, "female"
+        adult_temp = adult_age_schedule.loc[
+            adult_age_schedule["temperature"] == temp
         ]
-        fert_temp = fert_temp.loc[
-            fert_temp["female"].isin(available_females)
-        ].copy()
-        female_count = int(available_females.nunique())
-        if female_count == 0:
+        if adult_temp.empty:
             continue
-
-        individual_records = []
-        for female, female_data in fert_temp.groupby("female", sort=False):
-            preoviposition_values = (
-                female_data["preoviposition_days"].dropna().unique()
-            )
-            if len(preoviposition_values) != 1:
-                raise ValueError(
-                    f"Expected one preoviposition duration for female {female!r} "
-                    f"at {temp:g} C; found {len(preoviposition_values)}."
-                )
-            preoviposition_days = float(preoviposition_values[0])
-            if preoviposition_days < 0 or not preoviposition_days.is_integer():
-                raise ValueError(
-                    "Preoviposition duration must be a nonnegative whole number "
-                    f"of days; found {preoviposition_days} for female {female!r} "
-                    f"at {temp:g} C."
-                )
-            preoviposition_days = int(preoviposition_days)
-
-            for adult_age in range(preoviposition_days):
-                individual_records.append(
-                    {
-                        "adult_age_days": adult_age,
-                        "eggs": 0.0,
-                        "individual_phase": "adult_zero_fecundity",
-                    }
-                )
-
-            for row in female_data.sort_values("adult_day").itertuples(index=False):
-                if pd.isna(row.eggs):
-                    continue
-                individual_records.append(
-                    {
-                        "adult_age_days": preoviposition_days
-                        + int(row.adult_day)
-                        - 1,
-                        "eggs": float(row.eggs),
-                        "individual_phase": "reproductive",
-                    }
-                )
-
-        aligned = pd.DataFrame(individual_records)
         records = []
-        for adult_age, age_data in aligned.groupby("adult_age_days", sort=True):
-            live_count = len(age_data)
-            zero_fecundity_count = int(
-                (age_data["individual_phase"] == "adult_zero_fecundity").sum()
-            )
-            reproductive_count = live_count - zero_fecundity_count
-            eggs_per_live_female = float(age_data["eggs"].mean())
-            adult_survival = live_count / female_count
-            if zero_fecundity_count == live_count:
-                schedule_phase = "adult_zero_fecundity"
-            elif zero_fecundity_count == 0:
-                schedule_phase = "reproductive"
-            else:
-                schedule_phase = "mixed"
-
+        for adult in adult_temp.itertuples(index=False):
             for preadult in preadult_distribution.itertuples(index=False):
                 records.append(
                     {
                         "temperature": temp,
-                        "age_days": float(preadult.preadult_days) + adult_age,
-                        "adult_age_days": adult_age,
+                        "age_days": (
+                            float(preadult.preadult_days) + adult.adult_age_days
+                        ),
+                        "adult_age_days": adult.adult_age_days,
                         "preadult_days": float(preadult.preadult_days),
                         "preadult_weight": float(preadult.preadult_weight),
                         "lx": (
                             juvenile_survival
-                            * adult_survival
+                            * adult.adult_survival
                             * float(preadult.preadult_weight)
                         ),
-                        "mx": eggs_per_live_female * offspring_female_fraction,
-                        "live_females": live_count,
-                        "zero_fecundity_females": zero_fecundity_count,
-                        "reproductive_females": reproductive_count,
-                        "eggs_per_live_female": eggs_per_live_female,
-                        "schedule_phase": schedule_phase,
+                        "mx": adult.mean_eggs * offspring_female_fraction,
+                        "live_females": adult.live_females,
+                        "zero_fecundity_females": adult.zero_fecundity_females,
+                        "reproductive_females": adult.reproductive_females,
+                        "eggs_per_live_female": adult.mean_eggs,
+                        "schedule_phase": adult.schedule_phase,
                     }
                 )
 

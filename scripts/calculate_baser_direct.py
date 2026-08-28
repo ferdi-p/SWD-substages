@@ -173,7 +173,7 @@ def main() -> None:
     plot_temperature_metric(
         rates,
         metric="R0",
-        ylabel="Net reproductive rate, R0",
+        ylabel="Net reproduction rate, R0",
         output=args.plot_dir / "baser_direct_R0_by_temperature.png",
         critical_value=1.0,
     )

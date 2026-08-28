@@ -44,7 +44,7 @@ make help        # list the available commands
 - `data/processed/baser/`: version-controlled analysis inputs;
 - `tests/`: automated tests.
 
-The analysis reconstructs direct estimates of net reproductive rate (`R0`),
+The analysis reconstructs direct estimates of net reproduction rate (`R0`),
 intrinsic growth rate (`r`), and generation time; fits M1–M3; simulates seasonal
 population dynamics; and evaluates juvenile- and adult-targeted mortality
 scenarios. All analysis entry points accept `--help`.
