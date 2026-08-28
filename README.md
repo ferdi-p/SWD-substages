@@ -58,8 +58,6 @@ fertility workbooks associated with:
 > Apulian Strain of *Drosophila suzukii* at Different Temperatures,” *Insects*
 > 16:60, DOI: 10.3390/insects16010060.
 
-The original Excel workbooks are not redistributed and are not required to run
-the analysis. Full provenance and reconstruction instructions are provided in
 `data/processed/baser/README.md`.
 
 ## License
