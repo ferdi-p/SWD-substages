@@ -49,7 +49,7 @@ intrinsic growth rate (`r`), and generation time; fits M1–M3; simulates season
 population dynamics; and evaluates juvenile- and adult-targeted mortality
 scenarios. All analysis entry points accept `--help`.
 
-## Data provenance
+## Data origin
 
 The processed inputs are direct transformations of the life-table and
 fertility workbooks associated with:
