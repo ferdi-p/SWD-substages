@@ -28,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--output",
         type=Path,
-        default=MANUSCRIPT_FIGURE_DIR / "m3_adult_fecundity_profile.pdf",
+        default=MANUSCRIPT_FIGURE_DIR / "Figure S3.pdf",
         help=(
             "Output figure path. The model-only workflow redirects this to "
             "outputs/."

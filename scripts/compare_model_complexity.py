@@ -1427,7 +1427,7 @@ def write_shared_model_figures(
     paths = {
         "stage_durations": plot_dir / "mean_stage_durations.png",
         "manuscript_stage_durations": publication_figure_dir
-        / "mean_stage_durations.pdf",
+        / "Figure 2.pdf",
         "delay_distributions": plot_dir / "delay_distributions.png",
         "delay_distributions_flipped": plot_dir / "delay_distributions_flipped.png",
         "delay_distributions_main_stage_xrange": plot_dir
@@ -1439,9 +1439,9 @@ def write_shared_model_figures(
         "maturation_survival_main_stage_xrange": plot_dir
         / "maturation_survival_main_stage_xrange.png",
         "manuscript_maturation_survival": publication_figure_dir
-        / "maturation_survival.pdf",
+        / "Figure 3.pdf",
         "si_maturation_survival": supplementary_figure_dir
-        / "Figure_S1_maturation_survival_all_temperatures.pdf",
+        / "Figure S1.pdf",
     }
     plot_stage_duration_panel(summaries, main_models, output=paths["stage_durations"])
     plot_stage_duration_panel(
@@ -1569,13 +1569,13 @@ def write_manuscript_comparison_figures(
     supplementary_figure_dir.mkdir(parents=True, exist_ok=True)
     paths = {
         "juvenile_temperature": figure_dir
-        / "juvenile_survival_mortality_temperature.pdf",
-        "fecundity_temperature": figure_dir / "fecundity_temperature.pdf",
-        "adult_reproduction_time": figure_dir / "adult_reproduction_time.pdf",
+        / "Figure 4.pdf",
+        "fecundity_temperature": figure_dir / "Figure 5.pdf",
+        "adult_reproduction_time": figure_dir / "Figure 6.pdf",
         "adult_reproduction_time_full": supplementary_figure_dir
-        / "Figure_S2_adult_reproduction_all_temperatures.pdf",
-        "demographic_metrics": figure_dir / "demographic_metrics.pdf",
-        "seasonal_simulation": figure_dir / "seasonal_simulation_composite.pdf",
+        / "Figure S2.pdf",
+        "demographic_metrics": figure_dir / "Figure 7.pdf",
+        "seasonal_simulation": figure_dir / "Figure 8.pdf",
     }
     plot_juvenile_temperature_comparison(
         summaries["juvenile"],

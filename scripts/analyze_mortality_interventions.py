@@ -157,7 +157,7 @@ def main() -> None:
         output=manuscript_r_plot,
     )
     manuscript_pdf = (
-        args.publication_figure_dir / "mortality_intervention_r_20C.pdf"
+        args.publication_figure_dir / "Figure 9.pdf"
     )
     plot_manuscript_mortality_intervention_r(
         juvenile,

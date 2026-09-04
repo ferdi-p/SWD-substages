@@ -26,6 +26,18 @@ PROCESSED_SCHEMAS = {
     },
 }
 
+MAIN_FIGURE_LABELS = (
+    "fig:diagram",
+    "fig:stage-duration-functions",
+    "fig:stage-duration-survival",
+    "fig:juvenile-survival-mortality-temperature",
+    "fig:fecundity-temperature",
+    "fig:adult-reproduction-time",
+    "fig:demographic-metrics",
+    "fig:seasonal-simulation-composite",
+    "fig:mortality-intervention-r",
+)
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -159,8 +171,8 @@ def verify_intervention_outputs() -> None:
 def verify_manuscript_figures() -> int:
     sources = (
         MANUSCRIPT_DIR / "popModels.tex",
-        MANUSCRIPT_DIR / "supplementary_appendices.tex",
-        MANUSCRIPT_DIR / "supplementary_figures.tex",
+        MANUSCRIPT_DIR / "supporting_information_methods.tex",
+        MANUSCRIPT_DIR / "supporting_information_figures.tex",
     )
     missing_sources = [str(path) for path in sources if not path.is_file()]
     if missing_sources:
@@ -169,6 +181,87 @@ def verify_manuscript_figures() -> int:
     main_text = sources[0].read_text(encoding="utf-8")
     if r"\appendix" in main_text:
         raise RuntimeError("The main manuscript still contains an appendix boundary")
+
+    bibliography_position = main_text.find(r"\printbibliography")
+    legends_position = main_text.find(r"\section*{Figure Legends}")
+    if bibliography_position < 0 or legends_position < bibliography_position:
+        raise RuntimeError("The complete figure-legend section must follow the bibliography")
+
+    main_body = main_text[:legends_position]
+    active_main_body = "\n".join(
+        line for line in main_body.splitlines() if not line.lstrip().startswith("%")
+    )
+    if r"\includegraphics" in active_main_body:
+        raise RuntimeError("The main manuscript still embeds at least one figure image")
+
+    legend_text = main_text[legends_position:]
+    legend_labels = tuple(re.findall(r"\\label\{(fig:[^}]+)\}", legend_text))
+    if legend_labels != MAIN_FIGURE_LABELS:
+        raise RuntimeError(
+            "Main figure legends are missing or out of order: "
+            f"expected {MAIN_FIGURE_LABELS}, found {legend_labels}"
+        )
+    first_reference_positions = []
+    for label in MAIN_FIGURE_LABELS:
+        match = re.search(rf"\\ref\{{{re.escape(label)}\}}", main_body)
+        if match is None:
+            raise RuntimeError(f"Main text does not cite {label}")
+        first_reference_positions.append(match.start())
+    if first_reference_positions != sorted(first_reference_positions):
+        raise RuntimeError("Main figures are not first cited in numerical order")
+
+    required_supporting_citations = (
+        "Section~S1",
+        "Section~S2",
+        "Section~S3",
+        "Sections~S4--S6",
+        "Section~S7",
+        "Table~S1",
+        "Figure~S1",
+        "Figure~S2",
+        "Figure~S3",
+    )
+    missing_supporting_citations = [
+        citation for citation in required_supporting_citations if citation not in main_body
+    ]
+    if missing_supporting_citations:
+        raise RuntimeError(
+            "Main text is missing Supporting Information citations: "
+            f"{missing_supporting_citations}"
+        )
+
+    for source in sources:
+        text = source.read_text(encoding="utf-8")
+        if re.search(r"\bAppend(?:ix|ices)\b", text, flags=re.IGNORECASE):
+            raise RuntimeError(f"{source} still uses Appendix terminology")
+
+    expected_main_figures = tuple(
+        MANUSCRIPT_DIR / "figures" / f"Figure {number}.pdf"
+        for number in range(1, 10)
+    )
+    expected_supporting_figures = (
+        MANUSCRIPT_DIR / "supplementary_figures" / "Figure S1.pdf",
+        MANUSCRIPT_DIR / "supplementary_figures" / "Figure S2.pdf",
+        MANUSCRIPT_DIR / "figures" / "Figure S3.pdf",
+    )
+    expected_figure_files = expected_main_figures + expected_supporting_figures
+    missing_figure_files = [
+        str(path) for path in expected_figure_files if not path.is_file()
+    ]
+    if missing_figure_files:
+        raise RuntimeError(f"Missing numbered figure files: {missing_figure_files}")
+
+    upload_figure_dir = MANUSCRIPT_DIR.parent / "output" / "submission_figures"
+    expected_upload_figures = tuple(
+        upload_figure_dir / f"Figure {number}.eps" for number in range(1, 10)
+    )
+    missing_upload_figures = [
+        str(path) for path in expected_upload_figures if not path.is_file()
+    ]
+    if missing_upload_figures:
+        raise RuntimeError(
+            f"Missing upload-ready EPS figures: {missing_upload_figures}"
+        )
 
     references: list[str] = []
     for source in sources:
@@ -183,7 +276,7 @@ def verify_manuscript_figures() -> int:
     ]
     if missing:
         raise RuntimeError(f"Missing manuscript/SI figures: {missing}")
-    return len(references)
+    return len(expected_figure_files)
 
 
 def read_required_csv(path: Path) -> pd.DataFrame:
